@@ -1,5 +1,6 @@
 streamlit
-streamlit-geolocation
+bokeh
+streamlit-bokeh-events
 gspread
 google-api-python-client
 google-auth
