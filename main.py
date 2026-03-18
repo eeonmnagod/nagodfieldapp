@@ -52,6 +52,15 @@ if 'input_mobile' not in st.session_state:
 if 'success_msg' not in st.session_state:
     st.session_state['success_msg'] = ""
 
+# --- AUTO-CLEANER FUNCTION ---
+def enforce_numeric():
+    """Instantly strips letters/symbols from inputs the moment the user finishes typing."""
+    if 'input_ivrs' in st.session_state:
+        st.session_state['input_ivrs'] = ''.join(filter(str.isdigit, st.session_state['input_ivrs']))
+    if 'input_mobile' in st.session_state:
+        st.session_state['input_mobile'] = ''.join(filter(str.isdigit, st.session_state['input_mobile']))
+
+
 # --- 5. ADMIN SIDEBAR ---
 with st.sidebar:
     st.header("⚙️ Admin Dashboard")
@@ -114,8 +123,9 @@ else:
     # --- 2. Consumer Details Form ---
     st.subheader("📝 2. Consumer Details")
     
-    ivrs = st.text_input("IVRS of Consumer (10 Digits) *", max_chars=10, key="input_ivrs")
-    mobile = st.text_input("Correct Mobile Number (10 Digits) *", max_chars=10, key="input_mobile")
+    # Notice the 'on_change=enforce_numeric' callback added here
+    ivrs = st.text_input("IVRS of Consumer (10 Digits) *", max_chars=10, key="input_ivrs", on_change=enforce_numeric)
+    mobile = st.text_input("Correct Mobile Number (10 Digits) *", max_chars=10, key="input_mobile", on_change=enforce_numeric)
     
     valid_ivrs = ivrs.isdigit() and len(ivrs) == 10
     valid_mobile = mobile.isdigit() and len(mobile) == 10
@@ -203,7 +213,6 @@ else:
                         drive_client.files().create(body=file_metadata, media_body=media, fields='id').execute()
 
                     # 2. Append Data to Google Sheets
-                    # Open the sheet exactly as named in Google Drive
                     sheet = sheets_client.open("Nagod_Field_Data").sheet1
                     
                     row_data = [
@@ -215,7 +224,7 @@ else:
                     
                     sheet.append_row(row_data)
 
-                    # Wipe inputs clean
+                    # Wipe inputs clean for the next house
                     st.session_state['input_ivrs'] = ""
                     st.session_state['input_mobile'] = ""
                     if 'theft_checkbox' in st.session_state: st.session_state['theft_checkbox'] = False
