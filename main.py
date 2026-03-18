@@ -1,5 +1,4 @@
 import streamlit as st
-from streamlit_geolocation import streamlit_geolocation
 from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
@@ -7,24 +6,24 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload
 import io
 
+# We now use Bokeh for a massive, customizable location button!
+from bokeh.models.widgets import Button
+from bokeh.models import CustomJS
+from streamlit_bokeh_events import streamlit_bokeh_events
+
 # --- 1. GOOGLE DRIVE FOLDER ID ---
 DRIVE_FOLDER_ID = "1bYXCpK0aqrE86-Q5tkrWfw5M72x_6SAp"
 
 # --- 2. GOOGLE AUTHENTICATION (Cached for speed) ---
 @st.cache_resource
 def get_google_clients():
-    # Define the permissions we need (Drive and Sheets)
     scopes = [
         'https://www.googleapis.com/auth/spreadsheets',
         'https://www.googleapis.com/auth/drive'
     ]
-    # Pull the secret JSON data from Streamlit's secure vault
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
-    
-    # Create the clients
     sheets_client = gspread.authorize(creds)
     drive_client = build('drive', 'v3', credentials=creds)
-    
     return sheets_client, drive_client
 
 # --- 3. REAL EMPLOYEE DIRECTORY ---
@@ -54,7 +53,6 @@ if 'success_msg' not in st.session_state:
 
 # --- AUTO-CLEANER FUNCTION ---
 def enforce_numeric():
-    """Instantly strips letters/symbols from inputs the moment the user finishes typing."""
     if 'input_ivrs' in st.session_state:
         st.session_state['input_ivrs'] = ''.join(filter(str.isdigit, st.session_state['input_ivrs']))
     if 'input_mobile' in st.session_state:
@@ -65,7 +63,6 @@ def enforce_numeric():
 with st.sidebar:
     st.header("⚙️ Admin Dashboard")
     st.success("🟢 Connected to Google Cloud")
-    st.write("Your data and photos are syncing live to your Google Workspace.")
     st.markdown("[📊 Open Google Sheets](https://sheets.google.com)")
     st.markdown("[📁 Open Google Drive](https://drive.google.com)")
 
@@ -109,21 +106,43 @@ else:
         
     st.divider()
 
-    # --- 1. Location Ping ---
+    # --- 1. BIG Location Button ---
     st.subheader("📍 1. Capture Consumer Location")
-    location = streamlit_geolocation()
-    lat = location.get('latitude')
-    lng = location.get('longitude')
+    
+    # Create the large green button
+    loc_button = Button(label="Fetch Location First", button_type="success", sizing_mode="stretch_width")
+    loc_button.js_on_event("button_click", CustomJS(code="""
+        navigator.geolocation.getCurrentPosition(
+            (loc) => {
+                document.dispatchEvent(new CustomEvent("GET_LOCATION", {detail: {lat: loc.coords.latitude, lon: loc.coords.longitude}}))
+            }
+        )
+    """))
+    
+    # Render it securely into the Streamlit app
+    result = streamlit_bokeh_events(
+        loc_button,
+        events="GET_LOCATION",
+        key="get_location",
+        refresh_on_update=False,
+        override_height=50,
+        debounce_time=0
+    )
+
+    # Extract coordinates if the button was pressed
+    lat, lng = None, None
+    if result and "GET_LOCATION" in result:
+        lat = result.get("GET_LOCATION")["lat"]
+        lng = result.get("GET_LOCATION")["lon"]
 
     if lat and lng:
-        st.success(f"Location locked: {lat}, {lng}")
+        st.success(f"✅ Location locked: {lat}, {lng}")
     else:
-        st.warning("Awaiting GPS coordinates...")
+        st.warning("⚠️ Please tap the green button above.")
 
     # --- 2. Consumer Details Form ---
     st.subheader("📝 2. Consumer Details")
     
-    # Notice the 'on_change=enforce_numeric' callback added here
     ivrs = st.text_input("IVRS of Consumer (10 Digits) *", max_chars=10, key="input_ivrs", on_change=enforce_numeric)
     mobile = st.text_input("Correct Mobile Number (10 Digits) *", max_chars=10, key="input_mobile", on_change=enforce_numeric)
     
@@ -162,8 +181,8 @@ else:
 
     st.divider()
 
-    # --- 3. Optional: Theft & Photo ---
-    st.subheader("🚨 3. Additional Reports (Optional)")
+    # --- 3. Optional: Theft & Media Upload ---
+    st.subheader("🚨 3. Additional Reports & Evidence")
     
     theft_reported = "No"
     theft_type = ""
@@ -177,8 +196,16 @@ else:
         ], key="theft_type_dropdown")
         theft_details = st.text_area("Provide additional details (Optional):", key="theft_details_input")
 
-    st.write("📸 **Capture Photo Evidence**")
-    photo = st.camera_input("Take a picture", key="photo_input")
+    st.write("📸/🎥 **Evidence Upload (Optional)**")
+    
+    # The New Radio Button Choice for Media!
+    media_source = st.radio("Choose source:", ["No Media", "Take a Picture", "Upload Image/Video"], horizontal=True)
+    
+    media_file = None
+    if media_source == "Take a Picture":
+        media_file = st.camera_input("Take a picture", key="photo_input")
+    elif media_source == "Upload Image/Video":
+        media_file = st.file_uploader("Upload an image or video from your device", type=['jpg', 'jpeg', 'png', 'mp4', 'mov', 'avi'], key="media_upload")
 
     st.write("") 
     
@@ -199,18 +226,32 @@ else:
                     sheets_client, drive_client = get_google_clients()
                     timestamp_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     
-                    # 1. Upload Photo to Google Drive
-                    photo_filename = "No Photo"
-                    if photo is not None:
-                        photo_filename = f"{ivrs}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+                    # 1. Dynamically Upload Image OR Video to Google Drive
+                    media_filename = "No Media"
+                    if media_file is not None:
+                        # Find the correct file extension based on what they uploaded
+                        original_name = getattr(media_file, "name", "photo.jpg")
+                        ext = original_name.split('.')[-1].lower() if '.' in original_name else 'jpg'
+                        
+                        # Set the correct formatting for Google Drive
+                        if ext in ['mp4', 'mov', 'avi']:
+                            mimetype = f'video/{ext}'
+                        elif ext in ['jpg', 'jpeg']:
+                            mimetype = 'image/jpeg'
+                        elif ext == 'png':
+                            mimetype = 'image/png'
+                        else:
+                            mimetype = 'application/octet-stream'
+
+                        media_filename = f"{ivrs}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{ext}"
                         
                         file_metadata = {
-                            'name': photo_filename,
+                            'name': media_filename,
                             'parents': [DRIVE_FOLDER_ID]
                         }
-                        media = MediaIoBaseUpload(io.BytesIO(photo.getvalue()), mimetype='image/jpeg', resumable=True)
                         
-                        drive_client.files().create(body=file_metadata, media_body=media, fields='id').execute()
+                        media_upload = MediaIoBaseUpload(io.BytesIO(media_file.getvalue()), mimetype=mimetype, resumable=False)
+                        drive_client.files().create(body=file_metadata, media_body=media_upload, fields='id').execute()
 
                     # 2. Append Data to Google Sheets
                     sheet = sheets_client.open("Nagod_Field_Data").sheet1
@@ -219,18 +260,22 @@ else:
                         timestamp_str, st.session_state['dc_name'], st.session_state['employee_name'], 
                         lat, lng, ivrs, mobile, response, 
                         str(f1a), str(f1b), str(f2a), str(f3a), str(f4a), str(f4b), 
-                        theft_reported, theft_type, theft_details, photo_filename
+                        theft_reported, theft_type, theft_details, media_filename
                     ]
                     
                     sheet.append_row(row_data)
 
-                    # Wipe inputs clean for the next house
+                    # Wipe all inputs clean for the next house
                     st.session_state['input_ivrs'] = ""
                     st.session_state['input_mobile'] = ""
                     if 'theft_checkbox' in st.session_state: st.session_state['theft_checkbox'] = False
                     if 'theft_type_dropdown' in st.session_state: st.session_state['theft_type_dropdown'] = "Select Type"
                     if 'theft_details_input' in st.session_state: st.session_state['theft_details_input'] = ""
                     if 'photo_input' in st.session_state: st.session_state['photo_input'] = None
+                    if 'media_upload' in st.session_state: st.session_state['media_upload'] = None
+                    
+                    # Force the Location Button to reset!
+                    if 'get_location' in st.session_state: del st.session_state['get_location']
 
                     st.session_state['success_msg'] = f"✅ IVRS {ivrs} synced to Google! Ready for next consumer."
                     st.rerun()
