@@ -1,0 +1,13 @@
+nagoddowebapp@nagod-field-app.iam.gserviceaccount.com
+
+
+
+Photo Folder 1bYXCpK0aqrE86-Q5tkrWfw5M72x_6SAp
+
+
+
+streamlit
+streamlit-geolocation
+gspread
+google-api-python-client
+google-auth
