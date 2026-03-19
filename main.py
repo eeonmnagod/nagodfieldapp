@@ -3,24 +3,18 @@ from streamlit_js_eval import get_geolocation
 from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseUpload
-import io
+import base64
+import requests
 
-# --- 1. GOOGLE DRIVE FOLDER ID ---
-DRIVE_FOLDER_ID = "1bYXCpK0aqrE86-Q5tkrWfw5M72x_6SAp"
+# --- 1. GOOGLE APPS SCRIPT WEB APP URL ---
+GAS_URL = "https://script.google.com/macros/s/AKfycbxsOA-9QBFSRg9lKxPT0tmhtvotAprAXpT81EdH1554hIr7io7DuX1G4yZkPewoAoNP/exec"
 
-# --- 2. GOOGLE AUTHENTICATION (Cached for speed) ---
+# --- 2. GOOGLE SHEETS AUTHENTICATION (Cached for speed) ---
 @st.cache_resource
-def get_google_clients():
-    scopes = [
-        'https://www.googleapis.com/auth/spreadsheets',
-        'https://www.googleapis.com/auth/drive'
-    ]
+def get_sheets_client():
+    scopes = ['https://www.googleapis.com/auth/spreadsheets']
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
-    sheets_client = gspread.authorize(creds)
-    drive_client = build('drive', 'v3', credentials=creds)
-    return sheets_client, drive_client
+    return gspread.authorize(creds)
 
 # --- 3. REAL EMPLOYEE DIRECTORY ---
 EMPLOYEE_MAP = {
@@ -43,13 +37,11 @@ if 'logged_in' not in st.session_state:
 if 'success_msg' not in st.session_state:
     st.session_state['success_msg'] = ""
 
-# THE FIX: This number will step up by 1 every time we submit, generating a completely clean form!
 if 'form_key' not in st.session_state:
     st.session_state.form_key = 0
 
 # --- AUTO-CLEANER FUNCTION ---
 def enforce_numeric():
-    """Instantly strips letters/symbols from inputs."""
     ivrs_key = f"ivrs_{st.session_state.form_key}"
     mob_key = f"mobile_{st.session_state.form_key}"
     
@@ -57,7 +49,6 @@ def enforce_numeric():
         st.session_state[ivrs_key] = ''.join(filter(str.isdigit, st.session_state[ivrs_key]))
     if mob_key in st.session_state:
         st.session_state[mob_key] = ''.join(filter(str.isdigit, st.session_state[mob_key]))
-
 
 # --- 5. ADMIN SIDEBAR ---
 with st.sidebar:
@@ -107,14 +98,10 @@ else:
         
     st.divider()
 
-    # --- 1. Automatic Location Ping (NO BUTTON) ---
+    # --- 1. Automatic Location Ping ---
     st.subheader("📍 1. Capturing Location...")
-    
-    # This automatically prompts the browser for GPS data
     loc = get_geolocation()
-    
-    lat = None
-    lng = None
+    lat, lng = None, None
     
     if loc and 'coords' in loc:
         lat = loc['coords']['latitude']
@@ -126,7 +113,6 @@ else:
     # --- 2. Consumer Details Form ---
     st.subheader("📝 2. Consumer Details")
     
-    # Notice the dynamic keys: they change every time 'form_key' goes up!
     ivrs = st.text_input("IVRS of Consumer (10 Digits) *", max_chars=10, key=f"ivrs_{st.session_state.form_key}", on_change=enforce_numeric)
     mobile = st.text_input("Correct Mobile Number (10 Digits) *", max_chars=10, key=f"mobile_{st.session_state.form_key}", on_change=enforce_numeric)
     
@@ -139,11 +125,7 @@ else:
         st.caption("❌ *Mobile number must be exactly 10 numeric digits.*")
     
     response = st.selectbox("Consumer Response *", [
-        "Select Response", 
-        "1. Consumer Contacted", 
-        "2. Line TD", 
-        "3. Bill Paid", 
-        "4. Bill Correction Required"
+        "Select Response", "1. Consumer Contacted", "2. Line TD", "3. Bill Paid", "4. Bill Correction Required"
     ], key=f"resp_{st.session_state.form_key}")
 
     f1a = f1b = f2a = f3a = f4a = f4b = ""
@@ -199,24 +181,28 @@ else:
         else:
             with st.spinner("Syncing to Google Cloud..."):
                 try:
-                    sheets_client, drive_client = get_google_clients()
-                    timestamp_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                    
-                    # 1. Upload Photo to Google Drive
+                    # 1. Upload Photo via Apps Script Bridge
                     photo_filename = "No Photo"
                     if photo is not None:
                         photo_filename = f"{ivrs}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
                         
-                        file_metadata = {
-                            'name': photo_filename,
-                            'parents': [DRIVE_FOLDER_ID]
+                        base64_image = base64.b64encode(photo.getvalue()).decode('utf-8')
+                        payload = {
+                            "base64": base64_image,
+                            "filename": photo_filename,
+                            "mimetype": "image/jpeg"
                         }
-                        media = MediaIoBaseUpload(io.BytesIO(photo.getvalue()), mimetype='image/jpeg', resumable=False)
-                        drive_client.files().create(body=file_metadata, media_body=media, fields='id').execute()
+                        
+                        # Send to your Apps Script
+                        upload_response = requests.post(GAS_URL, json=payload)
+                        if upload_response.status_code != 200:
+                            st.warning("⚠️ Photo took too long to upload, but data is syncing...")
 
                     # 2. Append Data to Google Sheets
-                    sheet = sheets_client.open("Nagod_Field_Data").sheet1
+                    sheets_client = get_sheets_client()
+                    timestamp_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     
+                    sheet = sheets_client.open("Nagod_Field_Data").sheet1
                     row_data = [
                         timestamp_str, st.session_state['dc_name'], st.session_state['employee_name'], 
                         lat, lng, ivrs, mobile, response, 
@@ -226,7 +212,7 @@ else:
                     
                     sheet.append_row(row_data)
 
-                    # THE FIX IS HERE: Just increment the form key. It builds a whole new form instantly!
+                    # Wipes the form clean!
                     st.session_state.form_key += 1
                     
                     st.session_state['success_msg'] = f"✅ IVRS {ivrs} synced to Google! Ready for next consumer."
