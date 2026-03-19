@@ -1,6 +1,5 @@
 streamlit
-bokeh
-streamlit-bokeh-events
+streamlit-js-eval
 gspread
 google-api-python-client
 google-auth
