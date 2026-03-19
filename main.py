@@ -2,6 +2,7 @@ import streamlit as st
 from streamlit_js_eval import get_geolocation
 from datetime import datetime
 import gspread
+from gspread.exceptions import WorksheetNotFound
 from google.oauth2.service_account import Credentials
 import base64
 import requests
@@ -13,7 +14,6 @@ GAS_URL = "https://script.google.com/macros/s/AKfycbxsOA-9QBFSRg9lKxPT0tmhtvotAp
 # --- 2. GOOGLE SHEETS AUTHENTICATION (Cached for speed) ---
 @st.cache_resource
 def get_sheets_client():
-    # THE FIX: Added the Drive scope back so gspread can search for the sheet name!
     scopes = [
         'https://www.googleapis.com/auth/spreadsheets',
         'https://www.googleapis.com/auth/drive'
@@ -191,29 +191,41 @@ else:
                     photo_filename = "No Photo"
                     if photo is not None:
                         photo_filename = f"{ivrs}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
-                        
                         base64_image = base64.b64encode(photo.getvalue()).decode('utf-8')
-                        payload = {
-                            "base64": base64_image,
-                            "filename": photo_filename,
-                            "mimetype": "image/jpeg"
-                        }
-                        
+                        payload = {"base64": base64_image, "filename": photo_filename, "mimetype": "image/jpeg"}
                         requests.post(GAS_URL, json=payload)
 
-                    # 2. Append Data to Google Sheets
+                    # 2. Append Data to Google Sheets dynamically!
                     sheets_client = get_sheets_client()
+                    ss = sheets_client.open("Nagod_Field_Data")
                     timestamp_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     
-                    sheet = sheets_client.open("Nagod_Field_Data").sheet1
-                    row_data = [
-                        timestamp_str, st.session_state['dc_name'], st.session_state['employee_name'], 
-                        lat, lng, ivrs, mobile, response, 
-                        str(f1a), str(f1b), str(f2a), str(f3a), str(f4a), str(f4b), 
-                        theft_reported, theft_type, theft_details, photo_filename
-                    ]
-                    
-                    sheet.append_row(row_data)
+                    # Common data shared across all sheets
+                    base_data = [timestamp_str, st.session_state['dc_name'], st.session_state['employee_name'], lat, lng, ivrs, mobile]
+                    base_headers = ["Timestamp", "DC Name", "Employee", "Lat", "Lng", "IVRS", "Mobile"]
+
+                    # Helper function to find sheet, create if missing, and append data
+                    def push_to_sheet(sheet_title, specific_headers, specific_data):
+                        try:
+                            ws = ss.worksheet(sheet_title)
+                        except WorksheetNotFound:
+                            ws = ss.add_worksheet(title=sheet_title, rows=1000, cols=20)
+                            ws.append_row(base_headers + specific_headers)
+                        ws.append_row(base_data + specific_data)
+
+                    # Route the data to the correct sheet tab based on Consumer Response
+                    if response == "1. Consumer Contacted":
+                        push_to_sheet("Contacted", ["Mobile Corrected?", "Pay within Days", "Photo File"], [str(f1a), str(f1b), photo_filename])
+                    elif response == "2. Line TD":
+                        push_to_sheet("Line TD", ["Meter Reading at TD", "Photo File"], [str(f2a), photo_filename])
+                    elif response == "3. Bill Paid":
+                        push_to_sheet("Bill Paid", ["Amount Paid (Rs)", "Photo File"], [str(f3a), photo_filename])
+                    elif response == "4. Bill Correction Required":
+                        push_to_sheet("Correction Req", ["App given to DC?", "Complaint Registered?", "Photo File"], [str(f4a), str(f4b), photo_filename])
+
+                    # Separate Routing for Theft (If reported)
+                    if theft_reported == "Yes":
+                        push_to_sheet("Theft Reports", ["Theft Type", "Details", "Photo File"], [theft_type, theft_details, photo_filename])
 
                     # Wipes the form clean!
                     st.session_state.form_key += 1
