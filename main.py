@@ -7,12 +7,17 @@ import base64
 import requests
 
 # --- 1. GOOGLE APPS SCRIPT WEB APP URL ---
+# ⚠️ PASTE THE URL YOU COPIED FROM GOOGLE APPS SCRIPT HERE
 GAS_URL = "https://script.google.com/macros/s/AKfycbxsOA-9QBFSRg9lKxPT0tmhtvotAprAXpT81EdH1554hIr7io7DuX1G4yZkPewoAoNP/exec"
 
 # --- 2. GOOGLE SHEETS AUTHENTICATION (Cached for speed) ---
 @st.cache_resource
 def get_sheets_client():
-    scopes = ['https://www.googleapis.com/auth/spreadsheets']
+    # THE FIX: Added the Drive scope back so gspread can search for the sheet name!
+    scopes = [
+        'https://www.googleapis.com/auth/spreadsheets',
+        'https://www.googleapis.com/auth/drive'
+    ]
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
     return gspread.authorize(creds)
 
@@ -49,6 +54,7 @@ def enforce_numeric():
         st.session_state[ivrs_key] = ''.join(filter(str.isdigit, st.session_state[ivrs_key]))
     if mob_key in st.session_state:
         st.session_state[mob_key] = ''.join(filter(str.isdigit, st.session_state[mob_key]))
+
 
 # --- 5. ADMIN SIDEBAR ---
 with st.sidebar:
@@ -193,10 +199,7 @@ else:
                             "mimetype": "image/jpeg"
                         }
                         
-                        # Send to your Apps Script
-                        upload_response = requests.post(GAS_URL, json=payload)
-                        if upload_response.status_code != 200:
-                            st.warning("⚠️ Photo took too long to upload, but data is syncing...")
+                        requests.post(GAS_URL, json=payload)
 
                     # 2. Append Data to Google Sheets
                     sheets_client = get_sheets_client()
