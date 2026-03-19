@@ -21,16 +21,25 @@ def get_sheets_client():
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
     return gspread.authorize(creds)
 
-# --- 3. REAL EMPLOYEE DIRECTORY ---
-EMPLOYEE_MAP = {
+# --- 3A. FIELD STAFF DIRECTORY (GPS & Photos Required) ---
+FIELD_STAFF_MAP = {
     "Hardua": ["Select Name", "_SHRI_RAFEEK_KHAN_Outsource", "SHRI_AVDHESH_GARG_Outsource", "SHRI_MANOJ_KUMAR_PAL_Outsource", "SHRI_NANDKISHOR_KUSHWAHA_Outsource", "SHRI_NAVEEN_KUMAR_NIGAM_JE", "SHRI_PREM_LAL_KUSHWAHA_Outsource", "SHRI_RAKESH_KUSHWAHA_Outsource", "SHRI_RAMDHANI_VERMA_Outsource", "SHRI_RAVI_DAHIYA_Outsource", "SHRI_SATYA_NARAYAN_KORI_LM"],
     "Jasso": ["Select Name", "Shri Bardani Prasad Loniya_Outsource", "Shri Chandra Dev Singh_Outsource", "Shri Deepak Kumar Loniya_Outsource", "Shri Devkumar Kushwaha_Outsource", "Shri Heeralal Kushwaha_Outsource", "Shri Pradeep Prajapati_Outsource", "Shri Rajneesh Paal_Outsource", "Shri Salman Khan_Outsource", "Shri Santosh Prajapati_Outsource", "Shri Shudhansu Rawat_LA", "Shri Shyambihari Kushwaha_Outsource", "Shri Vikash Kushwaha_Outsource", "Shri Virendra Kumaar Pal_Outsource", "Shri Virendra Kushwaha_Outsource", "Shri Vishnu Saket_LA", "Shri Yogendra kushwaha_Outsource"],
     "Nagod T": ["Select Name", "DHIRENDRA KUSHWAHA_Outsource", "HARSH GAUTAM_Outsource", "K.K. KUSHWAHA_Outsource", "MANISH KUMAR ARYA_Outsource", "MO. RASHID_Outsource", "ROHIT KUSHWAHA_Outsource", "SHIVAM KUSHWAHA_Outsource", "SUHEL AHMAD_Outsource", "SUNEEL KUMAR MISHRA_Outsource", "SURENDRA SINGH PARIHAR_Outsource"],
     "Nagod RES": ["Select Name", "AJAY SHUKLA _Outsource", "Akash Dwivedi _Outsource", "Akash kushwaha _Outsource", "Anil kushwaha _Meter Reader", "Anil kushwaha _Outsource", "Moolchand kushwaha _Outsource", "Munnilal LM", "Panjabi kushwaha _Outsource", "pradeep singh parihar _Outsource", "PUSHPENDRA KUSHWAHA _Outsource", "RAJBHAN KUSHWAHA _Outsource", "Ravikant Chaturvedi _Outsource", "Sourabh Singh_Peon", "sundar rajak _Outsource"],
-    "Singhpur": ["Select Name", "ANIL KUMAR GARG_METER READER", "ASHOK KUMAR URMALIYA _OS ALM", "BABU LAL KUSHWAHA_OS ALM", "BHUPENDRA KUSHWAHA_MEETAR READER", "DHEERAJ KOTWAR_MEETAR READER", "MO. NASEEMUDEEN_TA GR. II", "MR. KAMTA PRASAD SHUKLA_ALM", "MR. PRADEEP KUMAR SINGH_ALM", "MR. VISHRAM KUMAR KUSHWAHA_ALM", "MUKESH SARKAR_MEETAR READER", "NARENDRA KUMAR PANDEY_MEETAR READER", "PARSAS MANI SINGH_MEETAR READER", "PUNIT DWIVEDI_MEETAR READER", "RISHI NARAYAN PRAJAPATI_MEETAR READER", "ROHIT KUMAR ARAYA_MEETAR READER", "SHIV SHANKAR GAUTAM_OS ALM", "SUNEEL KUMAR PANDEY_OS ALM", "VEERENDRA PRATAP KUSHWAHA_OS ALM", "YOGENDRA PRATAP KUSHWAHA_OS ALM"],
-    "Division Office": ["Select Name", "Admin", "Manager"],
-    # NEW: Dedicated group for Substation Operators
-    "Substation (Calling Desk)": ["Select Name", "Operator 1", "Operator 2", "Operator 3"] 
+    "Singhpur": ["Select Name", "ANIL KUMAR GARG_METER READER", "ASHOK KUMAR URMALIYA _OS ALM", "BABU LAL KUSHWAHA_OS ALM", "BHUPENDRA KUSHWAHA_MEETAR READER", "DHEERAJ KOTWAR_MEETAR READER", "MO. NASEEMUDEEN_TA GR. II", "MR. KAMTA PRASAD SHUKLA_ALM", "MR. PRADEEP KUMAR SINGH_ALM", "MR. VISHRAM KUMAR KUSHWAHA_ALM", "MUKESH SARKAR_MEETAR READER", "NARENDRA KUMAR PANDEY_MEETAR READER", "PARSAS MANI SINGH_MEETAR READER", "PUNIT DWIVEDI_MEETAR READER", "RISHI NARAYAN PRAJAPATI_MEETAR READER", "ROHIT KUMAR ARAYA_MEETAR READER", "SHIV SHANKAR GAUTAM_OS ALM", "SUNEEL KUMAR PANDEY_OS ALM", "VEERENDRA PRATAP KUSHWAHA_OS ALM", "YOGENDRA PRATAP KUSHWAHA_OS ALM"]
+}
+
+# --- 3B. OFFICE/SUBSTATION STAFF DIRECTORY (Calling Desk) ---
+# You can easily edit these placeholders later!
+OFFICE_STAFF_MAP = {
+    "Division Office Nagod": ["Select Name", "Admin", "Manager"],
+    "Sub Division Nagod": ["Select Name", "SubDiv Operator 1", "SubDiv Operator 2"],
+    "Hardua Substation": ["Select Name", "Hardua Operator 1", "Hardua Operator 2"],
+    "Jasso Substation": ["Select Name", "Jasso Operator 1", "Jasso Operator 2"],
+    "Nagod T Substation": ["Select Name", "Nagod T Operator 1"],
+    "Nagod RES Substation": ["Select Name", "Nagod RES Operator 1"],
+    "Singhpur Substation": ["Select Name", "Singhpur Operator 1"]
 }
 
 st.set_page_config(page_title="Nagod Field App", page_icon="⚡")
@@ -38,8 +47,9 @@ st.set_page_config(page_title="Nagod Field App", page_icon="⚡")
 # --- 4. SESSION STATE INITIALIZATION ---
 if 'logged_in' not in st.session_state:
     st.session_state['logged_in'] = False
-    st.session_state['dc_name'] = ""
+    st.session_state['location_name'] = ""
     st.session_state['employee_name'] = ""
+    st.session_state['is_office_staff'] = False  # The master switch!
 
 if 'success_msg' not in st.session_state:
     st.session_state['success_msg'] = ""
@@ -64,7 +74,6 @@ with st.sidebar:
     st.success("🟢 Connected to Google Cloud")
     st.markdown("[📊 Open Field Data](https://sheets.google.com)")
     st.markdown("[📞 Open Calling Data](https://sheets.google.com)")
-    st.markdown("[📁 Open Google Drive](https://drive.google.com)")
 
 st.title("Nagod Division Field App")
 
@@ -73,19 +82,35 @@ if st.session_state['success_msg']:
     st.session_state['success_msg'] = ""
 
 # ==========================================
-# SCREEN 1: THE LOGIN GATE
+# SCREEN 1: THE HIERARCHY LOGIN GATE
 # ==========================================
 if not st.session_state['logged_in']:
     st.subheader("Login to Lock ID")
     
-    temp_dc = st.selectbox("Name of DC / Role *", ["Choose", "Hardua", "Jasso", "Nagod T", "Nagod RES", "Singhpur", "Division Office", "Substation (Calling Desk)"])
-    if temp_dc != "Choose":
-        temp_name = st.selectbox("Select your Name *", EMPLOYEE_MAP[temp_dc])
-        
-        if temp_name != "Select Name":
-            if st.button("Lock Details & Start", type="primary"):
-                st.session_state['dc_name'] = temp_dc
+    # LEVEL 1: Select Role
+    staff_type = st.radio("Select Your Role:", ["1. Field Staff (Line Staff)", "2. Substation & Office Staff"])
+    st.write("")
+    
+    # LEVEL 2 & 3: Dynamic Dropdowns
+    if staff_type == "1. Field Staff (Line Staff)":
+        temp_loc = st.selectbox("Name of DC *", ["Choose"] + list(FIELD_STAFF_MAP.keys()))
+        if temp_loc != "Choose":
+            temp_name = st.selectbox("Select your Name *", FIELD_STAFF_MAP[temp_loc])
+            if temp_name != "Select Name" and st.button("Lock Details & Start", type="primary"):
+                st.session_state['location_name'] = temp_loc
                 st.session_state['employee_name'] = temp_name
+                st.session_state['is_office_staff'] = False
+                st.session_state['logged_in'] = True
+                st.rerun()
+                
+    elif staff_type == "2. Substation & Office Staff":
+        temp_loc = st.selectbox("Name of Office / Substation *", ["Choose"] + list(OFFICE_STAFF_MAP.keys()))
+        if temp_loc != "Choose":
+            temp_name = st.selectbox("Select your Name *", OFFICE_STAFF_MAP[temp_loc])
+            if temp_name != "Select Name" and st.button("Lock Details & Start", type="primary"):
+                st.session_state['location_name'] = temp_loc
+                st.session_state['employee_name'] = temp_name
+                st.session_state['is_office_staff'] = True
                 st.session_state['logged_in'] = True
                 st.rerun()
 
@@ -97,7 +122,8 @@ else:
     st.markdown("### 🔒 Logged In As")
     col1, col2 = st.columns(2)
     with col1:
-        st.text_input("DC/Role", value=st.session_state['dc_name'], disabled=True)
+        role_label = "Office/Substation" if st.session_state['is_office_staff'] else "DC (Field)"
+        st.text_input(role_label, value=st.session_state['location_name'], disabled=True)
     with col2:
         st.text_input("Employee", value=st.session_state['employee_name'], disabled=True)
     
@@ -107,12 +133,9 @@ else:
         
     st.divider()
 
-    # Define a flag to easily check if the user is a caller
-    is_caller = (st.session_state['dc_name'] == "Substation (Calling Desk)")
-
     # --- UI: GPS (Field Workers Only) ---
     lat, lng = None, None
-    if not is_caller:
+    if not st.session_state['is_office_staff']:
         st.subheader("📍 1. Capturing Location...")
         loc = get_geolocation()
         
@@ -123,7 +146,7 @@ else:
         else:
             st.warning("Awaiting GPS coordinates... (Please ensure location is allowed in browser settings)")
     else:
-        st.info("📞 Operating in Substation Calling Mode. GPS Disabled.")
+        st.info("📞 Operating in Office Calling Mode. GPS Disabled.")
 
     # --- UI: Common Inputs ---
     st.subheader("📝 Consumer Details")
@@ -145,7 +168,7 @@ else:
     theft_type = theft_details = ""
     photo = None
 
-    if is_caller:
+    if st.session_state['is_office_staff']:
         # CALLING DESK QUESTIONS
         response = st.selectbox("Call Status *", [
             "Select Status", "1. Contacted - Promise to Pay", "2. Contacted - Already Paid", 
@@ -180,7 +203,6 @@ else:
 
         st.divider()
 
-        # Optional Theft & Photo for Field Workers ONLY
         st.subheader("🚨 Additional Reports (Optional)")
         if st.checkbox("Report Theft or Irregularity", key=f"theft_chk_{st.session_state.form_key}"):
             theft_reported = "Yes"
@@ -198,12 +220,11 @@ else:
 
     if st.button("💾 Sync to Google & Next", type="primary", disabled=disable_button):
         
-        # Validations
-        if not is_caller and (not lat or not lng):
+        if not st.session_state['is_office_staff'] and (not lat or not lng):
             st.error("⚠️ GPS location has not been captured yet. Please wait or check permissions.")
         elif response in ["Select Response", "Select Status"]:
             st.error("⚠️ Please select a Response/Status.")
-        elif not is_caller and theft_reported == "Yes" and theft_type == "Select Type":
+        elif not st.session_state['is_office_staff'] and theft_reported == "Yes" and theft_type == "Select Type":
             st.error("⚠️ You checked 'Report Theft'. Please select the Type of Theft.")
         else:
             with st.spinner("Syncing to Google Cloud..."):
@@ -211,7 +232,6 @@ else:
                     sheets_client = get_sheets_client()
                     timestamp_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-                    # Helper function to push data to ANY spreadsheet dynamically
                     def push_to_sheet(spreadsheet_name, sheet_title, base_hdrs, base_dat, specific_headers, specific_data):
                         ss = sheets_client.open(spreadsheet_name)
                         try:
@@ -224,9 +244,9 @@ else:
                     # ==========================================
                     # ROUTE 1: CALLING DESK DATA
                     # ==========================================
-                    if is_caller:
-                        base_data = [timestamp_str, st.session_state['employee_name'], ivrs, mobile, response]
-                        base_headers = ["Timestamp", "Operator Name", "IVRS", "Mobile", "Call Status"]
+                    if st.session_state['is_office_staff']:
+                        base_data = [timestamp_str, st.session_state['location_name'], st.session_state['employee_name'], ivrs, mobile, response]
+                        base_headers = ["Timestamp", "Office/Substation", "Operator Name", "IVRS", "Mobile", "Call Status"]
                         
                         if response == "1. Contacted - Promise to Pay":
                             push_to_sheet("Nagod_Calling_Data", "Promise to Pay", base_headers, base_data, ["Days to Pay"], [str(call_days)])
@@ -239,7 +259,6 @@ else:
                     # ROUTE 2: FIELD WORKER DATA
                     # ==========================================
                     else:
-                        # 1. Upload Photo
                         photo_filename = "No Photo"
                         if photo is not None:
                             photo_filename = f"{ivrs}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
@@ -247,8 +266,7 @@ else:
                             payload = {"base64": base64_image, "filename": photo_filename, "mimetype": "image/jpeg"}
                             requests.post(GAS_URL, json=payload)
 
-                        # 2. Append Data
-                        base_data = [timestamp_str, st.session_state['dc_name'], st.session_state['employee_name'], lat, lng, ivrs, mobile]
+                        base_data = [timestamp_str, st.session_state['location_name'], st.session_state['employee_name'], lat, lng, ivrs, mobile]
                         base_headers = ["Timestamp", "DC Name", "Employee", "Lat", "Lng", "IVRS", "Mobile"]
 
                         if response == "1. Consumer Contacted":
@@ -263,9 +281,7 @@ else:
                         if theft_reported == "Yes":
                             push_to_sheet("Nagod_Field_Data", "Theft Reports", base_headers, base_data, ["Theft Type", "Details", "Photo File"], [theft_type, theft_details, photo_filename])
 
-                    # Wipes the form clean!
                     st.session_state.form_key += 1
-                    
                     st.session_state['success_msg'] = f"✅ IVRS {ivrs} synced to Google! Ready for next consumer."
                     st.rerun()
 
