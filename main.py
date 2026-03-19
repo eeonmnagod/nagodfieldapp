@@ -40,20 +40,23 @@ if 'logged_in' not in st.session_state:
     st.session_state['dc_name'] = ""
     st.session_state['employee_name'] = ""
 
-if 'input_ivrs' not in st.session_state:
-    st.session_state['input_ivrs'] = ""
-if 'input_mobile' not in st.session_state:
-    st.session_state['input_mobile'] = ""
 if 'success_msg' not in st.session_state:
     st.session_state['success_msg'] = ""
+
+# THE FIX: This number will step up by 1 every time we submit, generating a completely clean form!
+if 'form_key' not in st.session_state:
+    st.session_state.form_key = 0
 
 # --- AUTO-CLEANER FUNCTION ---
 def enforce_numeric():
     """Instantly strips letters/symbols from inputs."""
-    if 'input_ivrs' in st.session_state:
-        st.session_state['input_ivrs'] = ''.join(filter(str.isdigit, st.session_state['input_ivrs']))
-    if 'input_mobile' in st.session_state:
-        st.session_state['input_mobile'] = ''.join(filter(str.isdigit, st.session_state['input_mobile']))
+    ivrs_key = f"ivrs_{st.session_state.form_key}"
+    mob_key = f"mobile_{st.session_state.form_key}"
+    
+    if ivrs_key in st.session_state:
+        st.session_state[ivrs_key] = ''.join(filter(str.isdigit, st.session_state[ivrs_key]))
+    if mob_key in st.session_state:
+        st.session_state[mob_key] = ''.join(filter(str.isdigit, st.session_state[mob_key]))
 
 
 # --- 5. ADMIN SIDEBAR ---
@@ -123,8 +126,9 @@ else:
     # --- 2. Consumer Details Form ---
     st.subheader("📝 2. Consumer Details")
     
-    ivrs = st.text_input("IVRS of Consumer (10 Digits) *", max_chars=10, key="input_ivrs", on_change=enforce_numeric)
-    mobile = st.text_input("Correct Mobile Number (10 Digits) *", max_chars=10, key="input_mobile", on_change=enforce_numeric)
+    # Notice the dynamic keys: they change every time 'form_key' goes up!
+    ivrs = st.text_input("IVRS of Consumer (10 Digits) *", max_chars=10, key=f"ivrs_{st.session_state.form_key}", on_change=enforce_numeric)
+    mobile = st.text_input("Correct Mobile Number (10 Digits) *", max_chars=10, key=f"mobile_{st.session_state.form_key}", on_change=enforce_numeric)
     
     valid_ivrs = ivrs.isdigit() and len(ivrs) == 10
     valid_mobile = mobile.isdigit() and len(mobile) == 10
@@ -140,24 +144,24 @@ else:
         "2. Line TD", 
         "3. Bill Paid", 
         "4. Bill Correction Required"
-    ])
+    ], key=f"resp_{st.session_state.form_key}")
 
     f1a = f1b = f2a = f3a = f4a = f4b = ""
 
     if response == "1. Consumer Contacted":
         st.info("Follow-up: Contacted")
-        f1a = "Yes" if st.checkbox("a. Mobile number corrected") else "No"
-        f1b = st.number_input("b. Bill will be paid within ___ days", min_value=0, step=1)
+        f1a = "Yes" if st.checkbox("a. Mobile number corrected", key=f"f1a_{st.session_state.form_key}") else "No"
+        f1b = st.number_input("b. Bill will be paid within ___ days", min_value=0, step=1, key=f"f1b_{st.session_state.form_key}")
     elif response == "2. Line TD":
         st.info("Follow-up: Line TD")
-        f2a = st.text_input("a. Meter Reading at disconnection")
+        f2a = st.text_input("a. Meter Reading at disconnection", key=f"f2a_{st.session_state.form_key}")
     elif response == "3. Bill Paid":
         st.info("Follow-up: Bill Paid")
-        f3a = st.number_input("a. Amount Paid (₹)", min_value=0.0, step=10.0)
+        f3a = st.number_input("a. Amount Paid (₹)", min_value=0.0, step=10.0, key=f"f3a_{st.session_state.form_key}")
     elif response == "4. Bill Correction Required":
         st.info("Follow-up: Correction")
-        f4a = st.radio("a. Application given to DC office?", ["Yes", "No"], index=1)
-        f4b = st.radio("b. Complaint Registered?", ["Yes", "No"], index=1)
+        f4a = st.radio("a. Application given to DC office?", ["Yes", "No"], index=1, key=f"f4a_{st.session_state.form_key}")
+        f4b = st.radio("b. Complaint Registered?", ["Yes", "No"], index=1, key=f"f4b_{st.session_state.form_key}")
 
     st.divider()
 
@@ -168,16 +172,16 @@ else:
     theft_type = ""
     theft_details = ""
     
-    if st.checkbox("Report Theft or Irregularity", key="theft_checkbox"):
+    if st.checkbox("Report Theft or Irregularity", key=f"theft_chk_{st.session_state.form_key}"):
         theft_reported = "Yes"
         st.error("⚠️ Theft Reporting Activated")
         theft_type = st.selectbox("Type of Theft *", [
             "Select Type", "Tariff Change", "Meter Defective Big House", "Meter Bypass", "Direct Theft"
-        ], key="theft_type_dropdown")
-        theft_details = st.text_area("Provide additional details (Optional):", key="theft_details_input")
+        ], key=f"theft_typ_{st.session_state.form_key}")
+        theft_details = st.text_area("Provide additional details (Optional):", key=f"theft_det_{st.session_state.form_key}")
 
     st.write("📸 **Capture Photo Evidence**")
-    photo = st.camera_input("Take a picture", key="photo_input")
+    photo = st.camera_input("Take a picture", key=f"photo_{st.session_state.form_key}")
 
     st.write("") 
     
@@ -208,7 +212,6 @@ else:
                             'parents': [DRIVE_FOLDER_ID]
                         }
                         media = MediaIoBaseUpload(io.BytesIO(photo.getvalue()), mimetype='image/jpeg', resumable=False)
-                        
                         drive_client.files().create(body=file_metadata, media_body=media, fields='id').execute()
 
                     # 2. Append Data to Google Sheets
@@ -223,14 +226,9 @@ else:
                     
                     sheet.append_row(row_data)
 
-                    # Wipe inputs clean for the next house
-                    st.session_state['input_ivrs'] = ""
-                    st.session_state['input_mobile'] = ""
-                    if 'theft_checkbox' in st.session_state: st.session_state['theft_checkbox'] = False
-                    if 'theft_type_dropdown' in st.session_state: st.session_state['theft_type_dropdown'] = "Select Type"
-                    if 'theft_details_input' in st.session_state: st.session_state['theft_details_input'] = ""
-                    if 'photo_input' in st.session_state: st.session_state['photo_input'] = None
-
+                    # THE FIX IS HERE: Just increment the form key. It builds a whole new form instantly!
+                    st.session_state.form_key += 1
+                    
                     st.session_state['success_msg'] = f"✅ IVRS {ivrs} synced to Google! Ready for next consumer."
                     st.rerun()
 
