@@ -16,7 +16,7 @@ GAS_URL = "https://script.google.com/macros/s/AKfycbxrYfFv7rhhvG9RtkEGurrLUcRQAx
 MASTER_PASSWORD = "ngb.test" # Division Admin Password
 
 # File Names (Ensure these are uploaded to your GitHub Repo)
-DO_FILE = "DO LIST NAGOD DIVISION.xlsx"
+DO_FILE = "DO.xlsx"
 MGR_FILE = "Mangers.xlsx"
 OFFICE_FILE = "Office_Staff.xlsx"
 SUBSTATION_FILE = "Substation_Staff.xlsx"
