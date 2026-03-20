@@ -24,18 +24,19 @@ st.set_page_config(page_title="Nagod Command Center", page_icon="⚡", layout="w
 def load_databases():
     try:
         # Read all data as text to prevent phone numbers/IVRS from losing zeros
-        df_do = pd.read_excel(DO_FILE, dtype=str)
+        # Explicitly targeting the newly named "DO" sheet
+        df_do = pd.read_excel(DO_FILE, sheet_name="DO", dtype=str)
         df_mgr = pd.read_excel(MGR_FILE, dtype=str)
         df_off = pd.read_excel(OFFICE_FILE, dtype=str)
         df_sub = pd.read_excel(SUBSTATION_FILE, dtype=str)
 
-        # THE FIX: Strip hidden spaces from all Excel column headers automatically
+        # Strip hidden spaces from all Excel column headers automatically
         df_do.columns = df_do.columns.str.strip()
         df_mgr.columns = df_mgr.columns.str.strip()
         df_off.columns = df_off.columns.str.strip()
         df_sub.columns = df_sub.columns.str.strip()
 
-        # Standardize the Substation sheet's Location Code column
+        # Standardize the Substation sheet's Location Code column if needed
         if 'Location_code' in df_sub.columns:
             df_sub.rename(columns={'Location_code': 'Location Code'}, inplace=True)
 
@@ -77,11 +78,8 @@ if not st.session_state['logged_in']:
 
     if not df_do.empty:
         # Check if 'Location Code' actually exists after stripping spaces
-        # Check if 'Location Code' actually exists after stripping spaces
         if 'Location Code' not in df_do.columns:
-            st.error("❌ CRITICAL: The column 'Location Code' is missing from the DO.xlsx file.")
-            st.warning("🔍 DEBUG: Here are the exact column names Python found inside your file:")
-            st.write(df_do.columns.tolist())
+            st.error("❌ CRITICAL: The column 'Location Code' is missing from the DO.xlsx file. Please check your Excel sheet headers.")
             st.stop()
 
         loc_codes = ["Select"] + sorted(df_do['Location Code'].dropna().unique().tolist())
