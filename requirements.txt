@@ -3,3 +3,4 @@ streamlit-js-eval
 gspread
 google-auth
 requests
+openpyxl
