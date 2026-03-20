@@ -11,7 +11,7 @@ import requests
 GAS_URL = "https://script.google.com/macros/s/AKfycbxrYfFv7rhhvG9RtkEGurrLUcRQAxpJkfDA0r7S32_tvHE_dcSkELzmKxQ_QDQXyfO_/exec"
 MASTER_PASSWORD = "ngb.test" # Division Admin Password
 
-# File Names (Must match GitHub EXACTLY)
+# File Names
 DO_FILE = "DO.xlsx"
 MGR_FILE = "Mangers.xlsx"
 OFFICE_FILE = "Office_Staff.xlsx"
@@ -19,24 +19,21 @@ SUBSTATION_FILE = "Substation_Staff.xlsx"
 
 st.set_page_config(page_title="Nagod Command Center", page_icon="⚡", layout="wide")
 
-# --- 2. DATA ENGINE (BULLETPROOF PANDAS CACHE) ---
+# --- 2. DATA ENGINE ---
 @st.cache_data
 def load_databases():
     try:
-        # Read all data as text to prevent phone numbers/IVRS from losing zeros
-        # Explicitly targeting the newly named "DO" sheet
         df_do = pd.read_excel(DO_FILE, sheet_name="DO", dtype=str)
         df_mgr = pd.read_excel(MGR_FILE, dtype=str)
         df_off = pd.read_excel(OFFICE_FILE, dtype=str)
         df_sub = pd.read_excel(SUBSTATION_FILE, dtype=str)
 
-        # Strip hidden spaces from all Excel column headers automatically
+        # Strip hidden spaces
         df_do.columns = df_do.columns.str.strip()
         df_mgr.columns = df_mgr.columns.str.strip()
         df_off.columns = df_off.columns.str.strip()
         df_sub.columns = df_sub.columns.str.strip()
 
-        # Standardize the Substation sheet's Location Code column if needed
         if 'Location_code' in df_sub.columns:
             df_sub.rename(columns={'Location_code': 'Location Code'}, inplace=True)
 
@@ -46,6 +43,17 @@ def load_databases():
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 df_do, df_mgr, df_off, df_sub = load_databases()
+
+# --- CREATE DC NAME MAPPING ---
+# This stitches the Location Code to the actual DC Name for the dropdowns
+dc_mapping = {}
+if not df_mgr.empty and 'NAME OF DC' in df_mgr.columns:
+    dc_mapping = dict(zip(df_mgr['Location Code'], df_mgr['NAME OF DC']))
+
+def format_dc_dropdown(code):
+    if code == "Select": return "Select"
+    dc_name = dc_mapping.get(code, "Unknown DC")
+    return f"{code} - {dc_name}"
 
 # --- 3. GOOGLE SHEETS AUTHENTICATION ---
 @st.cache_resource
@@ -77,9 +85,8 @@ if not st.session_state['logged_in']:
     st.divider()
 
     if not df_do.empty:
-        # Check if 'Location Code' actually exists after stripping spaces
         if 'Location Code' not in df_do.columns:
-            st.error("❌ CRITICAL: The column 'Location Code' is missing from the DO.xlsx file. Please check your Excel sheet headers.")
+            st.error("❌ CRITICAL: The column 'Location Code' is missing from the DO.xlsx file.")
             st.stop()
 
         loc_codes = ["Select"] + sorted(df_do['Location Code'].dropna().unique().tolist())
@@ -87,7 +94,9 @@ if not st.session_state['logged_in']:
         # --- ROUTE 1: FIELD STAFF ---
         if role == "1. Field Staff (Line Worker)":
             emp_name = st.text_input("Enter Your Name *")
-            loc_code = st.selectbox("Select Your DC (Location Code) *", loc_codes)
+            
+            # Using the format_func to show "Code - Name"
+            loc_code = st.selectbox("Select Your DC *", loc_codes, format_func=format_dc_dropdown)
             
             if loc_code != "Select":
                 filtered_group_rds = ["Select"] + sorted(df_do[df_do['Location Code'] == loc_code]['Group-RD'].dropna().unique().tolist())
@@ -100,7 +109,7 @@ if not st.session_state['logged_in']:
         # --- ROUTE 2: CALLING DESK ---
         elif role == "2. Calling Desk (Substation & Office)":
             desk_type = st.radio("Select Desk Type:", ["Office Staff", "Substation Operator"])
-            loc_code = st.selectbox("Select DC (Location Code) *", loc_codes)
+            loc_code = st.selectbox("Select DC *", loc_codes, format_func=format_dc_dropdown)
             
             if loc_code != "Select":
                 if desk_type == "Office Staff":
@@ -116,7 +125,7 @@ if not st.session_state['logged_in']:
 
         # --- ROUTE 3: DC INCHARGE ---
         elif role == "3. DC Incharge (Manager)":
-            loc_code = st.selectbox("Select Assigned DC (Location Code) *", loc_codes)
+            loc_code = st.selectbox("Select Assigned DC *", loc_codes, format_func=format_dc_dropdown)
             if loc_code != "Select":
                 names = ["Select Name"] + df_mgr[df_mgr['Location Code'] == loc_code]['Name of Managers'].dropna().tolist()
                 emp_name = st.selectbox("Select Manager Name *", names)
@@ -146,6 +155,8 @@ if not st.session_state['logged_in']:
 # ==========================================
 else:
     role = st.session_state['role']
+    active_dc_name = dc_mapping.get(st.session_state['location_code'], st.session_state['location_code'])
+    
     st.sidebar.success(f"🟢 Active Shift: {st.session_state['emp_name']}")
     if st.sidebar.button("Log Out"):
         st.session_state.clear()
@@ -155,7 +166,8 @@ else:
     # ROUTE 1: FIELD STAFF
     # ---------------------------------------------------------
     if role == "1. Field Staff (Line Worker)":
-        st.header(f"📍 Field Operations: Group-RD {st.session_state['group_rd']}")
+        # The new highly visible header with DC Name and Group RD
+        st.header(f"📍 {active_dc_name} DC | Group-RD: {st.session_state['group_rd']}")
         my_consumers = df_do[df_do['Group-RD'] == st.session_state['group_rd']]
         
         st.info(f"Target: 30 Visits Today. Pending DOs in your Group-RD: {len(my_consumers)}")
@@ -218,11 +230,9 @@ else:
     # ROUTE 2: CALLING DESK
     # ---------------------------------------------------------
     elif role == "2. Calling Desk (Substation & Office)":
-        st.header(f"📞 Calling Desk: Location Code {st.session_state['location_code']}")
+        st.header(f"📞 Calling Desk: {active_dc_name} DC")
         
         my_consumers = df_do[df_do['Location Code'] == st.session_state['location_code']].copy()
-        
-        # Ensure Arrear is numeric before sorting
         my_consumers['Arrear'] = pd.to_numeric(my_consumers['Arrear'], errors='coerce').fillna(0)
         my_consumers = my_consumers.sort_values(by="Arrear", ascending=False)
         
@@ -253,7 +263,7 @@ else:
     # ROUTE 3: DC INCHARGE
     # ---------------------------------------------------------
     elif role == "3. DC Incharge (Manager)":
-        st.header(f"📊 Manager Dashboard: {st.session_state['location_code']}")
+        st.header(f"📊 Manager Dashboard: {active_dc_name} DC")
         st.markdown("*Live integration with Google Sheets data will visualize progress here.*")
         col1, col2 = st.columns(2)
         col1.metric(label="Total Houses Visited Today", value="18 / 30 Target", delta="-12")
