@@ -77,8 +77,11 @@ if not st.session_state['logged_in']:
 
     if not df_do.empty:
         # Check if 'Location Code' actually exists after stripping spaces
+        # Check if 'Location Code' actually exists after stripping spaces
         if 'Location Code' not in df_do.columns:
-            st.error("❌ CRITICAL: The column 'Location Code' is missing from the DO.xlsx file. Please check your Excel sheet headers.")
+            st.error("❌ CRITICAL: The column 'Location Code' is missing from the DO.xlsx file.")
+            st.warning("🔍 DEBUG: Here are the exact column names Python found inside your file:")
+            st.write(df_do.columns.tolist())
             st.stop()
 
         loc_codes = ["Select"] + sorted(df_do['Location Code'].dropna().unique().tolist())
