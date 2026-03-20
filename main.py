@@ -8,7 +8,7 @@ import base64
 import requests
 
 # --- 1. CONFIGURATION & SECRETS ---
-GAS_URL = "https://script.google.com/macros/s/AKfycbxsOA-9QBFSRg9lKxPT0tmhtvotAprAXpT81EdH1554hIr7io7DuX1G4yZkPewoAoNP/exec"
+GAS_URL = "https://script.google.com/macros/s/AKfycbxrYfFv7rhhvG9RtkEGurrLUcRQAxpJkfDA0r7S32_tvHE_dcSkELzmKxQ_QDQXyfO_/exec"
 MASTER_PASSWORD = "ngb.test" # Division Admin Password
 
 # File Names (Ensure these are uploaded to your GitHub Repo)
@@ -20,7 +20,6 @@ SUBSTATION_FILE = "Substation_Staff.xlsx"
 st.set_page_config(page_title="Nagod Command Center", page_icon="⚡", layout="wide")
 
 # --- 2. DATA ENGINE (PANDAS CACHE) ---
-# This loads all your Excel files into lightning-fast memory
 @st.cache_data
 def load_databases():
     try:
@@ -35,7 +34,7 @@ def load_databases():
 
 df_do, df_mgr, df_off, df_sub = load_databases()
 
-# --- 3. GOOGLE SHEETS AUTHENTICATION (For syncing logs) ---
+# --- 3. GOOGLE SHEETS AUTHENTICATION ---
 @st.cache_resource
 def get_sheets_client():
     scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
@@ -65,10 +64,9 @@ if not st.session_state['logged_in']:
     st.divider()
 
     if not df_do.empty:
-        # Extract dynamic DC list directly from the billing software
         loc_codes = ["Select"] + sorted(df_do['Location Code'].dropna().unique().tolist())
         
-        # --- ROUTE 1: FIELD STAFF (Self-Service) ---
+        # --- ROUTE 1: FIELD STAFF ---
         if role == "1. Field Staff (Line Worker)":
             emp_name = st.text_input("Enter Your Name *")
             loc_code = st.selectbox("Select Your DC (Location Code) *", loc_codes)
@@ -81,7 +79,7 @@ if not st.session_state['logged_in']:
                     st.session_state.update({'logged_in': True, 'role': role, 'location_code': loc_code, 'group_rd': group_rd, 'emp_name': emp_name})
                     st.rerun()
 
-        # --- ROUTE 2: CALLING DESK (Dropdown Matching) ---
+        # --- ROUTE 2: CALLING DESK ---
         elif role == "2. Calling Desk (Substation & Office)":
             desk_type = st.radio("Select Desk Type:", ["Office Staff", "Substation Operator"])
             loc_code = st.selectbox("Select DC (Location Code) *", loc_codes)
@@ -98,15 +96,23 @@ if not st.session_state['logged_in']:
                     st.session_state.update({'logged_in': True, 'role': role, 'location_code': loc_code, 'emp_name': emp_name})
                     st.rerun()
 
-        # --- ROUTE 3: DC INCHARGE ---
+        # --- ROUTE 3: DC INCHARGE (PASSWORD PROTECTED) ---
         elif role == "3. DC Incharge (Manager)":
             loc_code = st.selectbox("Select Assigned DC (Location Code) *", loc_codes)
             if loc_code != "Select":
                 names = ["Select Name"] + df_mgr[df_mgr['Location Code'] == loc_code]['Name of Managers'].dropna().tolist()
                 emp_name = st.selectbox("Select Manager Name *", names)
-                if emp_name != "Select Name" and st.button("Open DC Dashboard", type="primary"):
-                    st.session_state.update({'logged_in': True, 'role': role, 'location_code': loc_code, 'emp_name': emp_name})
-                    st.rerun()
+                
+                if emp_name != "Select Name":
+                    # The new password field
+                    mgr_pass = st.text_input("Enter Password (DC Location Code) *", type="password")
+                    
+                    if st.button("Open DC Dashboard", type="primary"):
+                        if mgr_pass == loc_code:
+                            st.session_state.update({'logged_in': True, 'role': role, 'location_code': loc_code, 'emp_name': emp_name})
+                            st.rerun()
+                        else:
+                            st.error("❌ Incorrect Password. Please enter your valid DC Location Code.")
 
         # --- ROUTE 4: DIVISION ADMIN ---
         elif role == "4. Division Admin":
@@ -129,7 +135,7 @@ else:
         st.rerun()
 
     # ---------------------------------------------------------
-    # ROUTE 1: FIELD STAFF (GPS, Village Verification & Data)
+    # ROUTE 1: FIELD STAFF
     # ---------------------------------------------------------
     if role == "1. Field Staff (Line Worker)":
         st.header(f"📍 Field Operations: Group-RD {st.session_state['group_rd']}")
@@ -137,7 +143,6 @@ else:
         
         st.info(f"Target: 30 Visits Today. Pending DOs in your Group-RD: {len(my_consumers)}")
         
-        # GPS Capture
         loc = get_geolocation()
         lat, lng = (loc['coords']['latitude'], loc['coords']['longitude']) if loc and 'coords' in loc else (None, None)
         if not lat:
@@ -157,7 +162,6 @@ else:
                 
                 st.success(f"✅ Found: **{c_name}** | Arrears: **₹{c_arrear}**")
                 
-                # Verification Block
                 st.markdown("### Data Verification")
                 col1, col2 = st.columns(2)
                 with col1:
@@ -167,10 +171,8 @@ else:
                     vill_correct = st.radio(f"Is Village ({c_village}) correct?", ["Yes", "No - Update"], key=f"v_{st.session_state.form_key}")
                     final_vill = st.text_input("Enter Correct Village", key=f"v_new_{st.session_state.form_key}") if vill_correct == "No - Update" else c_village
                 
-                # Action Block
                 st.markdown("### Action Taken")
                 action = st.selectbox("Consumer Response", ["Select", "Bill Paid", "Line TD", "Promise to Pay", "Not Traceable"], key=f"act_{st.session_state.form_key}")
-                
                 photo = st.camera_input("Capture Evidence Photo (Required)", key=f"photo_{st.session_state.form_key}")
                 
                 if action != "Select" and photo and st.button("💾 Sync Data to Cloud", type="primary"):
@@ -178,12 +180,10 @@ else:
                         st.error("Wait for GPS to lock before submitting.")
                     else:
                         with st.spinner("Syncing to Google Sheets..."):
-                            # Send Photo to App Script
                             photo_filename = f"{search_ivrs}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
                             payload = {"base64": base64.b64encode(photo.getvalue()).decode('utf-8'), "filename": photo_filename, "mimetype": "image/jpeg"}
                             requests.post(GAS_URL, json=payload)
                             
-                            # Send Data to Sheets
                             sheets_client = get_sheets_client()
                             ws = sheets_client.open("Nagod_Field_Data").sheet1
                             ws.append_row([
@@ -198,7 +198,7 @@ else:
                 st.error("⚠️ IVRS not found in your assigned Group-RD. Please verify the number.")
 
     # ---------------------------------------------------------
-    # ROUTE 2: CALLING DESK (Smart Dialing & Prioritization)
+    # ROUTE 2: CALLING DESK
     # ---------------------------------------------------------
     elif role == "2. Calling Desk (Substation & Office)":
         st.header(f"📞 Calling Desk: Location Code {st.session_state['location_code']}")
@@ -207,8 +207,6 @@ else:
         my_consumers = my_consumers.sort_values(by="Arrear", ascending=False)
         
         st.warning("🎯 Target: 50 Calls Today. Displaying Top Defaulters:")
-        
-        # Display simplified target list
         st.dataframe(my_consumers[['Consumer No', 'Consumer Name', 'Arrear', 'Mobile No']].head(100), use_container_width=True)
         
         target_ivrs = st.selectbox("Select Consumer IVRS to Call:", ["Select"] + my_consumers['Consumer No'].tolist())
@@ -231,7 +229,7 @@ else:
                 st.success("Call logged successfully!")
 
     # ---------------------------------------------------------
-    # ROUTE 3: DC INCHARGE (Live Tracking)
+    # ROUTE 3: DC INCHARGE
     # ---------------------------------------------------------
     elif role == "3. DC Incharge (Manager)":
         st.header(f"📊 Manager Dashboard: {st.session_state['location_code']}")
@@ -241,7 +239,7 @@ else:
         col2.metric(label="Total Calls Made Today", value="45 / 50 Target", delta="-5")
 
     # ---------------------------------------------------------
-    # ROUTE 4: DIVISION ADMIN (Global Oversight & Discipline)
+    # ROUTE 4: DIVISION ADMIN
     # ---------------------------------------------------------
     elif role == "4. Division Admin":
         st.header("🏢 Division Command Center")
