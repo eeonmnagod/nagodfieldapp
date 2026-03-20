@@ -1,4 +1,7 @@
 import streamlit as st
+import os
+st.error("🔍 DEBUG: Files Streamlit can currently see:")
+st.write(os.listdir())
 import pandas as pd
 from datetime import datetime
 import gspread
@@ -6,6 +9,7 @@ from google.oauth2.service_account import Credentials
 from streamlit_js_eval import get_geolocation
 import base64
 import requests
+
 
 # --- 1. CONFIGURATION & SECRETS ---
 GAS_URL = "https://script.google.com/macros/s/AKfycbxrYfFv7rhhvG9RtkEGurrLUcRQAxpJkfDA0r7S32_tvHE_dcSkELzmKxQ_QDQXyfO_/exec"
