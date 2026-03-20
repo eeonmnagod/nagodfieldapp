@@ -59,7 +59,7 @@ def get_sheets_client():
     creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
     return gspread.authorize(creds)
 
-# --- 4. SESSION STATE (Added login steps and activity tracker) ---
+# --- 4. SESSION STATE ---
 if 'logged_in' not in st.session_state:
     st.session_state.update({
         'logged_in': False, 'role': None, 'location_code': None, 
@@ -122,7 +122,8 @@ if not st.session_state['logged_in']:
                 if not lat:
                     st.info("🛰️ Acquiring GPS Satellite Lock... Please allow location permissions.")
                 else:
-                    st.success(f"📍 GPS Locked: {lat[:6]}, {lng[:6]}")
+                    # THE FIX IS HERE: Formatting the float properly instead of slicing a string
+                    st.success(f"📍 GPS Locked: {lat:.4f}, {lng:.4f}")
                 
                 filtered_group_rds = ["Select"] + sorted(df_do[df_do['Location Code'] == st.session_state['location_code']]['Group-RD'].dropna().unique().tolist())
                 group_rd = st.selectbox("Select Your Assigned Group-RD *", filtered_group_rds)
@@ -187,7 +188,7 @@ else:
         st.rerun()
 
     # ---------------------------------------------------------
-    # ROUTE 1: FIELD STAFF (With Inactivity Tracker)
+    # ROUTE 1: FIELD STAFF
     # ---------------------------------------------------------
     if role == "1. Field Staff (Line Worker)":
         
@@ -198,12 +199,10 @@ else:
         if idle_time_minutes >= 15:
             st.error(f"⚠️ INACTIVITY ALERT: You have been idle for {idle_time_minutes} minutes. Your shift activity is currently flagged. Please log a consumer to reset the timer.")
         
-        # Beautiful Header
         st.header(f"📍 {active_dc_name} DC | Group-RD: {st.session_state['group_rd']}")
         my_consumers = df_do[df_do['Group-RD'] == st.session_state['group_rd']]
         st.info(f"Target: 30 Visits Today. Pending DOs in your Group: {len(my_consumers)}")
         
-        # Fast GPS acquisition (silently running in background now since acquired in Step 2)
         loc = get_geolocation()
         lat, lng = (loc['coords']['latitude'], loc['coords']['longitude']) if loc and 'coords' in loc else (None, None)
 
@@ -251,7 +250,6 @@ else:
                                 final_mob, final_vill, action, photo_filename
                             ])
                             
-                            # RESET INACTIVITY TIMER ON SUCCESS
                             st.session_state['last_activity_time'] = datetime.now()
                             st.session_state.form_key += 1
                             st.rerun()
@@ -259,7 +257,7 @@ else:
                 st.error("⚠️ IVRS not found in your assigned Group-RD. Please verify the number.")
 
     # ---------------------------------------------------------
-    # ROUTE 2, 3, 4 (Unchanged calling/manager sections)
+    # ROUTE 2, 3, 4 (Unchanged)
     # ---------------------------------------------------------
     elif role == "2. Calling Desk (Substation & Office)":
         st.header(f"📞 Calling Desk: {active_dc_name} DC")
