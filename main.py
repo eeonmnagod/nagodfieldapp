@@ -64,7 +64,8 @@ if 'logged_in' not in st.session_state:
     st.session_state.update({
         'logged_in': False, 'role': None, 'location_code': None, 
         'group_rd': None, 'emp_name': "", 'form_key': 0,
-        'login_step': 1, 'last_activity_time': None
+        'login_step': 1, 'last_activity_time': None,
+        'called_ivrs': [] # Memory tracker for calls made this shift
     })
 
 # ==========================================
@@ -89,10 +90,8 @@ if not st.session_state['logged_in']:
 
         loc_codes = ["Select"] + sorted(df_do['Location Code'].dropna().unique().tolist())
         
-        # --- ROUTE 1: FIELD STAFF (NEW 2-STEP FLOW) ---
+        # --- ROUTE 1: FIELD STAFF ---
         if role == "1. Field Staff (Line Worker)":
-            
-            # STEP 1: Activate Shift
             if st.session_state['login_step'] == 1:
                 st.subheader("Step 1: Activate Shift")
                 loc_code = st.selectbox("Select Your DC *", loc_codes, format_func=format_dc_dropdown)
@@ -101,16 +100,13 @@ if not st.session_state['logged_in']:
                 if st.button("⏱️ Activate Shift", type="primary"):
                     if loc_code != "Select" and emp_name:
                         st.session_state.update({
-                            'location_code': loc_code, 
-                            'emp_name': emp_name,
-                            'login_step': 2,
-                            'last_activity_time': datetime.now() # Start the clock
+                            'location_code': loc_code, 'emp_name': emp_name,
+                            'login_step': 2, 'last_activity_time': datetime.now()
                         })
                         st.rerun()
                     else:
                         st.warning("Please fill all details to activate shift.")
 
-            # STEP 2: Fetch GPS & Select Route
             elif st.session_state['login_step'] == 2:
                 active_dc_name = dc_mapping.get(st.session_state['location_code'], st.session_state['location_code'])
                 st.success(f"🟢 Shift Activated: **{st.session_state['emp_name']}** | **{active_dc_name} DC**")
@@ -122,7 +118,6 @@ if not st.session_state['logged_in']:
                 if not lat:
                     st.info("🛰️ Acquiring GPS Satellite Lock... Please allow location permissions.")
                 else:
-                    # THE FIX IS HERE: Formatting the float properly instead of slicing a string
                     st.success(f"📍 GPS Locked: {lat:.4f}, {lng:.4f}")
                 
                 filtered_group_rds = ["Select"] + sorted(df_do[df_do['Location Code'] == st.session_state['location_code']]['Group-RD'].dropna().unique().tolist())
@@ -131,16 +126,14 @@ if not st.session_state['logged_in']:
                 col1, col2 = st.columns(2)
                 with col1:
                     if st.button("🚀 Enter Dashboard", type="primary") and group_rd != "Select":
-                        st.session_state.update({
-                            'logged_in': True, 'role': role, 'group_rd': group_rd, 'last_activity_time': datetime.now()
-                        })
+                        st.session_state.update({'logged_in': True, 'role': role, 'group_rd': group_rd, 'last_activity_time': datetime.now()})
                         st.rerun()
                 with col2:
                     if st.button("Cancel Shift"):
                         st.session_state['login_step'] = 1
                         st.rerun()
 
-        # --- ROUTE 2, 3, 4 (Standard Logins) ---
+        # --- ROUTE 2: CALLING DESK LOGIN ---
         elif role == "2. Calling Desk (Substation & Office)":
             desk_type = st.radio("Select Desk Type:", ["Office Staff", "Substation Operator"])
             loc_code = st.selectbox("Select DC *", loc_codes, format_func=format_dc_dropdown)
@@ -154,6 +147,7 @@ if not st.session_state['logged_in']:
                     st.session_state.update({'logged_in': True, 'role': role, 'location_code': loc_code, 'emp_name': emp_name})
                     st.rerun()
 
+        # --- ROUTE 3: DC INCHARGE ---
         elif role == "3. DC Incharge (Manager)":
             loc_code = st.selectbox("Select Assigned DC *", loc_codes, format_func=format_dc_dropdown)
             if loc_code != "Select":
@@ -168,6 +162,7 @@ if not st.session_state['logged_in']:
                         else:
                             st.error("❌ Incorrect Password.")
 
+        # --- ROUTE 4: DIVISION ADMIN ---
         elif role == "4. Division Admin":
             admin_pass = st.text_input("Master Password", type="password")
             if st.button("Unlock Division Analytics", type="primary"):
@@ -188,16 +183,14 @@ else:
         st.rerun()
 
     # ---------------------------------------------------------
-    # ROUTE 1: FIELD STAFF
+    # ROUTE 1: FIELD STAFF 
     # ---------------------------------------------------------
     if role == "1. Field Staff (Line Worker)":
-        
-        # INACTIVITY TRACKER LOGIC
         idle_time_seconds = (datetime.now() - st.session_state['last_activity_time']).total_seconds()
         idle_time_minutes = int(idle_time_seconds / 60)
         
         if idle_time_minutes >= 15:
-            st.error(f"⚠️ INACTIVITY ALERT: You have been idle for {idle_time_minutes} minutes. Your shift activity is currently flagged. Please log a consumer to reset the timer.")
+            st.error(f"⚠️ INACTIVITY ALERT: You have been idle for {idle_time_minutes} minutes. Please log a consumer to reset the timer.")
         
         st.header(f"📍 {active_dc_name} DC | Group-RD: {st.session_state['group_rd']}")
         my_consumers = df_do[df_do['Group-RD'] == st.session_state['group_rd']]
@@ -257,19 +250,64 @@ else:
                 st.error("⚠️ IVRS not found in your assigned Group-RD. Please verify the number.")
 
     # ---------------------------------------------------------
-    # ROUTE 2, 3, 4 (Unchanged)
+    # ROUTE 2: CALLING DESK (Massively Upgraded)
     # ---------------------------------------------------------
     elif role == "2. Calling Desk (Substation & Office)":
         st.header(f"📞 Calling Desk: {active_dc_name} DC")
-        my_consumers = df_do[df_do['Location Code'] == st.session_state['location_code']].copy()
-        my_consumers['Arrear'] = pd.to_numeric(my_consumers['Arrear'], errors='coerce').fillna(0)
-        my_consumers = my_consumers.sort_values(by="Arrear", ascending=False)
-        st.warning("🎯 Target: 50 Calls Today. Displaying Top Defaulters:")
-        st.dataframe(my_consumers[['Consumer No', 'Consumer Name', 'Arrear', 'Mobile No']].head(100), use_container_width=True)
+        
+        # Pull all consumers for this DC
+        dc_consumers = df_do[df_do['Location Code'] == st.session_state['location_code']].copy()
+        
+        # 1. NEW: The Group-RD Filter
+        all_groups = ["All Groups"] + sorted(dc_consumers['Group-RD'].dropna().unique().tolist())
+        selected_group = st.selectbox("Target Specific Group-RD (Optional):", all_groups)
+        
+        if selected_group != "All Groups":
+            dc_consumers = dc_consumers[dc_consumers['Group-RD'] == selected_group]
 
+        # 2. NEW: Remove consumers who have already been called during this session
+        dc_consumers = dc_consumers[~dc_consumers['Consumer No'].isin(st.session_state['called_ivrs'])]
+        
+        # 3. Sort by Arrears to get top targets
+        dc_consumers['Arrear'] = pd.to_numeric(dc_consumers['Arrear'], errors='coerce').fillna(0)
+        top_defaulters = dc_consumers.sort_values(by="Arrear", ascending=False).head(50)
+        
+        st.warning(f"🎯 Target: 50 Calls Today. Displaying Top {len(top_defaulters)} Pending Defaulters:")
+        
+        # Display the cleanly formatted data
+        st.dataframe(top_defaulters[['Consumer No', 'Consumer Name', 'Arrear', 'Mobile No', 'Group-RD']], use_container_width=True)
+        
+        target_ivrs = st.selectbox("Select Consumer IVRS to Call:", ["Select"] + top_defaulters['Consumer No'].tolist())
+        
+        if target_ivrs != "Select":
+            c_data = top_defaulters[top_defaulters['Consumer No'] == target_ivrs].iloc[0]
+            st.markdown(f"### Consumer: {c_data['Consumer Name']} | Arrears: ₹{c_data['Arrear']}")
+            mob = str(c_data['Mobile No']).split('.')[0] if pd.notna(c_data['Mobile No']) else "No Number"
+            st.markdown(f"## [📞 CLICK TO CALL {mob}](tel:+91{mob})")
+            
+            call_status = st.selectbox("Call Status", ["Select", "Promise to Pay", "Already Paid", "Switch Off", "Wrong Number"])
+            notes = st.text_input("Additional Notes")
+            
+            if call_status != "Select" and st.button("Log Call", type="primary"):
+                with st.spinner("Logging call to database..."):
+                    sheets_client = get_sheets_client()
+                    ws = sheets_client.open("Nagod_Calling_Data").sheet1
+                    ws.append_row([
+                        datetime.now().strftime("%Y-%m-%d %H:%M:%S"), st.session_state['location_code'], 
+                        st.session_state['emp_name'], target_ivrs, call_status, notes
+                    ])
+                
+                # Add to memory and refresh so it disappears!
+                st.session_state['called_ivrs'].append(target_ivrs)
+                st.success("Call logged successfully!")
+                time.sleep(1.5)
+                st.rerun()
+
+    # ---------------------------------------------------------
+    # ROUTE 3 & 4 (Unchanged)
+    # ---------------------------------------------------------
     elif role == "3. DC Incharge (Manager)":
         st.header(f"📊 Manager Dashboard: {active_dc_name} DC")
-        st.markdown("*Live integration with Google Sheets data will visualize progress here.*")
         col1, col2 = st.columns(2)
         col1.metric("Houses Visited Today", "18 / 30 Target", "-12")
         col2.metric("Calls Made Today", "45 / 50 Target", "-5")
