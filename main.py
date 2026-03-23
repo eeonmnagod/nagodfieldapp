@@ -17,6 +17,7 @@ DO_FILE = "DO.xlsx"
 MGR_FILE = "Mangers.xlsx"
 OFFICE_FILE = "Office_Staff.xlsx"
 SUBSTATION_FILE = "Substation_Staff.xlsx"
+FIELD_FILE = "Field_Staff.xlsx" # <-- NEW FILE ADDED HERE
 
 st.set_page_config(page_title="Nagod Command Center", page_icon="⚡", layout="wide")
 
@@ -49,6 +50,13 @@ def load_databases():
         df_mgr = pd.read_excel(MGR_FILE, dtype=str)
         df_off = pd.read_excel(OFFICE_FILE, dtype=str)
         df_sub = pd.read_excel(SUBSTATION_FILE, dtype=str)
+        
+        # --- NEW: Load Field Staff Data ---
+        try:
+            df_field = pd.read_excel(FIELD_FILE, dtype=str)
+            df_field.columns = df_field.columns.str.strip()
+        except Exception:
+            df_field = pd.DataFrame(columns=['Location Code', 'Name of Staff'])
 
         df_do.columns = df_do.columns.str.strip()
         df_mgr.columns = df_mgr.columns.str.strip()
@@ -58,12 +66,12 @@ def load_databases():
         if 'Location_code' in df_sub.columns:
             df_sub.rename(columns={'Location_code': 'Location Code'}, inplace=True)
 
-        return df_do, df_mgr, df_off, df_sub
+        return df_do, df_mgr, df_off, df_sub, df_field
     except Exception as e:
         st.error(f"⚠️ Database Load Error: {e}")
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
-df_do, df_mgr, df_off, df_sub = load_databases()
+df_do, df_mgr, df_off, df_sub, df_field = load_databases()
 df_calls = load_call_history()
 
 # Process PTP Logic
@@ -123,18 +131,28 @@ if not st.session_state['logged_in']:
             if st.session_state['login_step'] == 1:
                 st.subheader("Step 1: Activate Shift")
                 loc_code = st.selectbox("Select Your DC *", loc_codes, format_func=format_dc_dropdown)
-                emp_name = st.text_input("Enter Your Name *")
+                
+                # --- NEW: Field Staff Dropdown ---
+                emp_name = "Select Name"
+                if loc_code != "Select":
+                    if not df_field.empty and 'Location Code' in df_field.columns:
+                        staff_list = ["Select Name"] + df_field[df_field['Location Code'] == loc_code]['Name of Staff'].dropna().tolist()
+                        emp_name = st.selectbox("Select Your Name *", staff_list)
+                    else:
+                        st.warning("⚠️ Field_Staff.xlsx is missing or empty. Please use text input.")
+                        emp_name = st.text_input("Enter Your Name *")
                 
                 if st.button("⏱️ Activate Shift", type="primary"):
-                    if loc_code != "Select" and emp_name:
+                    if loc_code != "Select" and emp_name != "Select Name" and emp_name != "":
                         st.session_state.update({'location_code': loc_code, 'emp_name': emp_name, 'login_step': 2, 'last_activity_time': datetime.now()})
                         st.rerun()
+                    else:
+                        st.error("Please select both a DC and your Name.")
 
             elif st.session_state['login_step'] == 2:
                 active_dc_name = dc_mapping.get(st.session_state['location_code'], st.session_state['location_code'])
                 st.success(f"🟢 Shift Activated: **{st.session_state['emp_name']}** | **{active_dc_name} DC**")
                 
-                # GPS Fast-Lock Patch
                 loc = get_geolocation()
                 if loc and 'coords' in loc:
                     st.session_state['lat'] = loc['coords']['latitude']
@@ -143,13 +161,11 @@ if not st.session_state['logged_in']:
                 else:
                     st.info("🛰️ Acquiring GPS Satellite Lock... Please allow location permissions.")
                 
-                # Cascading Group and RD Selection
                 dc_data = df_do[df_do['Location Code'] == st.session_state['location_code']]
                 
                 filtered_groups = ["Select"] + sorted(dc_data['Group'].dropna().unique().tolist())
                 selected_group = st.selectbox("Select Your Assigned Group *", filtered_groups)
                 
-                # Only show RDs that belong to the selected Group
                 filtered_rds = ["Select"]
                 if selected_group != "Select":
                     filtered_rds += sorted(dc_data[dc_data['Group'] == selected_group]['RD'].dropna().unique().tolist())
@@ -179,7 +195,9 @@ if not st.session_state['logged_in']:
                     names = ["Select Name"] + df_off[df_off['Location Code'] == loc_code]['NAME OF OFFICE STAFF'].dropna().tolist()
                 else:
                     names = ["Select Name"] + df_sub[df_sub['Location Code'] == loc_code]['NAME OF SUB STSTION OPERATOR'].dropna().tolist()
+                
                 emp_name = st.selectbox("Select Your Name *", names)
+                
                 if emp_name != "Select Name" and st.button("Access Calling Dashboard", type="primary"):
                     st.session_state.update({'logged_in': True, 'role': role, 'location_code': loc_code, 'emp_name': emp_name})
                     st.rerun()
@@ -230,7 +248,6 @@ else:
         
         st.header(f"📍 {active_dc_name} DC | Group: {st.session_state['group']} | RD: {st.session_state['rd']}")
         
-        # Filter by both columns
         my_consumers = df_do[(df_do['Group'] == st.session_state['group']) & (df_do['RD'] == st.session_state['rd'])]
         
         my_escalated = my_consumers[my_consumers['Consumer No'].isin(escalated_field_ivrs)]
@@ -243,7 +260,6 @@ else:
             st.info(f"Target: 30 Visits Today. Pending DOs in your Group & RD: {len(my_consumers)}")
             search_ivrs = st.text_input("Enter 10-Digit IVRS *", max_chars=10, key=f"search_{st.session_state.form_key}")
         
-        # Load fast GPS from memory instead of pinging satellite again
         lat = st.session_state.get('lat')
         lng = st.session_state.get('lng')
         
@@ -299,7 +315,6 @@ else:
         
         dc_consumers = df_do[df_do['Location Code'] == st.session_state['location_code']].copy()
         
-        # Cascading Filters for the Calling Desk
         col_f1, col_f2 = st.columns(2)
         with col_f1:
             all_groups = ["All Groups"] + sorted(dc_consumers['Group'].dropna().unique().tolist())
@@ -329,7 +344,6 @@ else:
             top_defaulters = dc_consumers.sort_values(by="Arrear", ascending=False).head(50)
             st.info(f"🎯 Displaying Top {len(top_defaulters)} Pending Defaulters:")
             
-            # Table displays both Group and RD columns
             st.dataframe(top_defaulters[['Consumer No', 'Consumer Name', 'Arrear', 'Mobile No', 'Group', 'RD']], use_container_width=True)
             target_ivrs = st.selectbox("Select Consumer IVRS to Call:", ["Select"] + top_defaulters['Consumer No'].tolist())
         
@@ -348,7 +362,6 @@ else:
                 
             notes = st.text_input("Additional Notes")
             
-            # The Always-Visible Submit Button
             if st.button("💾 Log Call", type="primary"):
                 if call_status == "Select":
                     st.error("⚠️ Please select a Call Status from the dropdown before submitting!")
