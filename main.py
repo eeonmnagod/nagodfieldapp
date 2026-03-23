@@ -360,7 +360,7 @@ else:
         lng = st.session_state.get('lng')
 
         st.markdown("### Log New Theft Incident")
-        theft_type = st.selectbox("Type of Theft *", ["Select", "Direct Hooking (Katiya)", "Meter Bypass", "Meter Tampering", "Unauthorized Extension"], key=f"t_type_{st.session_state.form_key}")
+        theft_type = st.selectbox("Type of Theft *", ["Select", "Direct Hooking (Katiya)","Tariff Change", "Meter Bypass","Load Enhancement", "Meter Tampering", "Premisses Change"], key=f"t_type_{st.session_state.form_key}")
         
         col1, col2 = st.columns(2)
         with col1:
@@ -369,7 +369,7 @@ else:
             ivrs_no = st.text_input("Enter IVRS (If Yes)", key=f"t_ivrs_{st.session_state.form_key}") if is_consumer == "Yes" else "N/A"
             
         suspect_name = st.text_input("Name of Suspect / Location Details *", key=f"t_name_{st.session_state.form_key}")
-        action_taken = st.selectbox("Action Taken *", ["Select", "Cable Confiscated", "Panchnama Made", "FIR Lodged", "Pending Investigation"], key=f"t_act_{st.session_state.form_key}")
+        #action_taken = st.selectbox("Action Taken *", ["Select", "Cable Confiscated", "Panchnama Made", "FIR Lodged", "Pending Investigation"], key=f"t_act_{st.session_state.form_key}")
         
         photo = st.camera_input("Capture Evidence Photo (Required) *", key=f"t_photo_{st.session_state.form_key}")
 
