@@ -337,3 +337,7 @@ else:
             
             ptp_date_str = ""
             if call_status == "Promise to Pay":
+                ptp_date = st.date_input("Expected Payment Date", min_value=date.today())
+                ptp_date_str = ptp_date.strftime('%Y-%m-%d')
+                
+            notes = st.text_input("Additional Notes")
