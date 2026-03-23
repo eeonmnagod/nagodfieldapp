@@ -368,8 +368,8 @@ else:
         with col2:
             ivrs_no = st.text_input("Enter IVRS (If Yes)", key=f"t_ivrs_{st.session_state.form_key}") if is_consumer == "Yes" else "N/A"
             
-        suspect_name = st.text_input("Name of Suspect / Location Details *", key=f"t_name_{st.session_state.form_key}")
-        theft_detail = st.text_input("Details of Theft *", key=f"t_name_{st.session_state.form_key}")
+        suspect_name = st.text_input("Name of Suspect,Location Details and other details *", key=f"t_name_{st.session_state.form_key}")
+        #theft_detail = st.text_input("Details of Theft *", key=f"t_name_{st.session_state.form_key}")
         #action_taken = st.selectbox("Action Taken *", ["Select", "Cable Confiscated", "Panchnama Made", "FIR Lodged", "Pending Investigation"], key=f"t_act_{st.session_state.form_key}")
         
         photo = st.camera_input("Capture Evidence Photo (Required) *", key=f"t_photo_{st.session_state.form_key}")
