@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, date
 import gspread
 from google.oauth2.service_account import Credentials
 from streamlit_js_eval import get_geolocation
@@ -20,7 +20,28 @@ SUBSTATION_FILE = "Substation_Staff.xlsx"
 
 st.set_page_config(page_title="Nagod Command Center", page_icon="⚡", layout="wide")
 
-# --- 2. DATA ENGINE ---
+# --- 2. GOOGLE SHEETS AUTHENTICATION ---
+@st.cache_resource
+def get_sheets_client():
+    scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
+    return gspread.authorize(creds)
+
+# --- 3. DATA ENGINE & HISTORY TRACKER ---
+@st.cache_data(ttl=300)
+def load_call_history():
+    """Reads the Google Sheet to track broken promises and follow-ups."""
+    try:
+        client = get_sheets_client()
+        ws = client.open("Nagod_Calling_Data").sheet1
+        records = ws.get_all_values()
+        if len(records) > 1:
+            df = pd.DataFrame(records[1:], columns=records[0])
+            return df
+    except Exception as e:
+        pass 
+    return pd.DataFrame(columns=['Timestamp', 'Location Code', 'Emp Name', 'IVRS', 'Status', 'Notes', 'FollowUpDate'])
+
 @st.cache_data
 def load_databases():
     try:
@@ -43,6 +64,20 @@ def load_databases():
         return pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 df_do, df_mgr, df_off, df_sub = load_databases()
+df_calls = load_call_history()
+
+# Process PTP Logic
+ptp_counts = {}
+todays_followups = []
+escalated_field_ivrs = []
+
+if not df_calls.empty and not df_do.empty:
+    ptp_history = df_calls[(df_calls['Status'] == 'Promise to Pay') & (df_calls['IVRS'].isin(df_do['Consumer No']))]
+    ptp_counts = ptp_history['IVRS'].value_counts().to_dict()
+    escalated_field_ivrs = [ivrs for ivrs, count in ptp_counts.items() if count >= 2]
+    
+    today_str = date.today().strftime('%Y-%m-%d')
+    todays_followups = ptp_history[ptp_history['FollowUpDate'] <= today_str]['IVRS'].unique().tolist()
 
 dc_mapping = {}
 if not df_mgr.empty and 'NAME OF DC' in df_mgr.columns:
@@ -52,20 +87,13 @@ def format_dc_dropdown(code):
     if code == "Select": return "Select"
     return f"{code} - {dc_mapping.get(code, 'Unknown DC')}"
 
-# --- 3. GOOGLE SHEETS AUTHENTICATION ---
-@st.cache_resource
-def get_sheets_client():
-    scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
-    return gspread.authorize(creds)
-
 # --- 4. SESSION STATE ---
 if 'logged_in' not in st.session_state:
     st.session_state.update({
         'logged_in': False, 'role': None, 'location_code': None, 
-        'group_rd': None, 'emp_name': "", 'form_key': 0,
+        'group': None, 'rd': None, 'emp_name': "", 'form_key': 0,
         'login_step': 1, 'last_activity_time': None,
-        'called_ivrs': [] # Memory tracker for calls made this shift
+        'called_ivrs': [], 'lat': None, 'lng': None
     })
 
 # ==========================================
@@ -99,39 +127,42 @@ if not st.session_state['logged_in']:
                 
                 if st.button("⏱️ Activate Shift", type="primary"):
                     if loc_code != "Select" and emp_name:
-                        st.session_state.update({
-                            'location_code': loc_code, 'emp_name': emp_name,
-                            'login_step': 2, 'last_activity_time': datetime.now()
-                        })
+                        st.session_state.update({'location_code': loc_code, 'emp_name': emp_name, 'login_step': 2, 'last_activity_time': datetime.now()})
                         st.rerun()
-                    else:
-                        st.warning("Please fill all details to activate shift.")
 
             elif st.session_state['login_step'] == 2:
                 active_dc_name = dc_mapping.get(st.session_state['location_code'], st.session_state['location_code'])
                 st.success(f"🟢 Shift Activated: **{st.session_state['emp_name']}** | **{active_dc_name} DC**")
                 
-                st.subheader("Step 2: Establish GPS & Select Route")
+                # GPS Fast-Lock Patch
                 loc = get_geolocation()
-                lat, lng = (loc['coords']['latitude'], loc['coords']['longitude']) if loc and 'coords' in loc else (None, None)
-                
-                if not lat:
-                    st.info("🛰️ Acquiring GPS Satellite Lock... Please allow location permissions.")
+                if loc and 'coords' in loc:
+                    st.session_state['lat'] = loc['coords']['latitude']
+                    st.session_state['lng'] = loc['coords']['longitude']
+                    st.success(f"📍 GPS Locked: {st.session_state['lat']:.4f}, {st.session_state['lng']:.4f}")
                 else:
-                    st.success(f"📍 GPS Locked: {lat:.4f}, {lng:.4f}")
+                    st.info("🛰️ Acquiring GPS Satellite Lock... Please allow location permissions.")
                 
-                filtered_group_rds = ["Select"] + sorted(df_do[df_do['Location Code'] == st.session_state['location_code']]['Group-RD'].dropna().unique().tolist())
-                group_rd = st.selectbox("Select Your Assigned Group-RD *", filtered_group_rds)
+                # --- NEW: Cascading Group and RD Selection ---
+                dc_data = df_do[df_do['Location Code'] == st.session_state['location_code']]
                 
-                col1, col2 = st.columns(2)
-                with col1:
-                    if st.button("🚀 Enter Dashboard", type="primary") and group_rd != "Select":
-                        st.session_state.update({'logged_in': True, 'role': role, 'group_rd': group_rd, 'last_activity_time': datetime.now()})
-                        st.rerun()
-                with col2:
-                    if st.button("Cancel Shift"):
-                        st.session_state['login_step'] = 1
-                        st.rerun()
+                filtered_groups = ["Select"] + sorted(dc_data['Group'].dropna().unique().tolist())
+                selected_group = st.selectbox("Select Your Assigned Group *", filtered_groups)
+                
+                # Only show RDs that belong to the selected Group
+                filtered_rds = ["Select"]
+                if selected_group != "Select":
+                    filtered_rds += sorted(dc_data[dc_data['Group'] == selected_group]['RD'].dropna().unique().tolist())
+                
+                selected_rd = st.selectbox("Select Your Assigned RD *", filtered_rds)
+                
+                if st.button("🚀 Enter Dashboard", type="primary") and selected_group != "Select" and selected_rd != "Select":
+                    st.session_state.update({
+                        'logged_in': True, 'role': role, 
+                        'group': selected_group, 'rd': selected_rd, 
+                        'last_activity_time': datetime.now()
+                    })
+                    st.rerun()
 
         # --- ROUTE 2: CALLING DESK LOGIN ---
         elif role == "2. Calling Desk (Substation & Office)":
@@ -186,21 +217,30 @@ else:
     # ROUTE 1: FIELD STAFF 
     # ---------------------------------------------------------
     if role == "1. Field Staff (Line Worker)":
+        
         idle_time_seconds = (datetime.now() - st.session_state['last_activity_time']).total_seconds()
-        idle_time_minutes = int(idle_time_seconds / 60)
+        if int(idle_time_seconds / 60) >= 15:
+            st.error(f"⚠️ INACTIVITY ALERT: You have been idle for {int(idle_time_seconds / 60)} minutes.")
         
-        if idle_time_minutes >= 15:
-            st.error(f"⚠️ INACTIVITY ALERT: You have been idle for {idle_time_minutes} minutes. Please log a consumer to reset the timer.")
+        # --- NEW: Header reflects separated Group and RD ---
+        st.header(f"📍 {active_dc_name} DC | Group: {st.session_state['group']} | RD: {st.session_state['rd']}")
         
-        st.header(f"📍 {active_dc_name} DC | Group-RD: {st.session_state['group_rd']}")
-        my_consumers = df_do[df_do['Group-RD'] == st.session_state['group_rd']]
-        st.info(f"Target: 30 Visits Today. Pending DOs in your Group: {len(my_consumers)}")
+        # --- NEW: Filter by both columns ---
+        my_consumers = df_do[(df_do['Group'] == st.session_state['group']) & (df_do['RD'] == st.session_state['rd'])]
         
-        loc = get_geolocation()
-        lat, lng = (loc['coords']['latitude'], loc['coords']['longitude']) if loc and 'coords' in loc else (None, None)
-
-        st.divider()
-        search_ivrs = st.text_input("Enter 10-Digit IVRS *", max_chars=10, key=f"search_{st.session_state.form_key}")
+        my_escalated = my_consumers[my_consumers['Consumer No'].isin(escalated_field_ivrs)]
+        if not my_escalated.empty:
+            st.error("🚨 HIGH PRIORITY: The following consumers have broken 2+ promises to pay via phone. Physical site visit required immediately.")
+            st.dataframe(my_escalated[['Consumer No', 'Consumer Name', 'Arrear', 'Address1']], use_container_width=True)
+            escalation_target = st.selectbox("Select Broken Promise Target:", ["Select"] + my_escalated['Consumer No'].tolist())
+            search_ivrs = escalation_target if escalation_target != "Select" else st.text_input("Or Enter Regular 10-Digit IVRS *", max_chars=10, key=f"search_{st.session_state.form_key}")
+        else:
+            st.info(f"Target: 30 Visits Today. Pending DOs in your Group & RD: {len(my_consumers)}")
+            search_ivrs = st.text_input("Enter 10-Digit IVRS *", max_chars=10, key=f"search_{st.session_state.form_key}")
+        
+        # Load fast GPS from memory instead of pinging satellite again
+        lat = st.session_state.get('lat')
+        lng = st.session_state.get('lng')
         
         if search_ivrs and len(search_ivrs) == 10:
             consumer_data = my_consumers[my_consumers['Consumer No'] == search_ivrs]
@@ -213,7 +253,6 @@ else:
                 
                 st.success(f"✅ Found: **{c_name}** | Arrears: **₹{c_arrear}**")
                 
-                st.markdown("### Data Verification")
                 col1, col2 = st.columns(2)
                 with col1:
                     mob_correct = st.radio(f"Is Mobile ({c_mob}) correct?", ["Yes", "No - Update"], key=f"m_{st.session_state.form_key}")
@@ -222,13 +261,12 @@ else:
                     vill_correct = st.radio(f"Is Village ({c_village}) correct?", ["Yes", "No - Update"], key=f"v_{st.session_state.form_key}")
                     final_vill = st.text_input("Enter Correct Village", key=f"v_new_{st.session_state.form_key}") if vill_correct == "No - Update" else c_village
                 
-                st.markdown("### Action Taken")
                 action = st.selectbox("Consumer Response", ["Select", "Bill Paid", "Line TD", "Promise to Pay", "Not Traceable"], key=f"act_{st.session_state.form_key}")
                 photo = st.camera_input("Capture Evidence Photo (Required)", key=f"photo_{st.session_state.form_key}")
                 
                 if action != "Select" and photo and st.button("💾 Sync Data to Cloud", type="primary"):
                     if not lat:
-                        st.error("Wait for GPS to lock before submitting.")
+                        st.error("Wait for GPS to lock before submitting. Refresh the page if needed.")
                     else:
                         with st.spinner("Syncing to Google Sheets..."):
                             photo_filename = f"{search_ivrs}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
@@ -242,77 +280,60 @@ else:
                                 st.session_state['emp_name'], lat, lng, search_ivrs, c_name, c_arrear, 
                                 final_mob, final_vill, action, photo_filename
                             ])
-                            
                             st.session_state['last_activity_time'] = datetime.now()
                             st.session_state.form_key += 1
                             st.rerun()
             else:
-                st.error("⚠️ IVRS not found in your assigned Group-RD. Please verify the number.")
+                st.error("⚠️ IVRS not found in your assigned Group & RD.")
 
     # ---------------------------------------------------------
-    # ROUTE 2: CALLING DESK (Massively Upgraded)
+    # ROUTE 2: CALLING DESK
     # ---------------------------------------------------------
     elif role == "2. Calling Desk (Substation & Office)":
         st.header(f"📞 Calling Desk: {active_dc_name} DC")
         
-        # Pull all consumers for this DC
         dc_consumers = df_do[df_do['Location Code'] == st.session_state['location_code']].copy()
         
-        # 1. NEW: The Group-RD Filter
-        all_groups = ["All Groups"] + sorted(dc_consumers['Group-RD'].dropna().unique().tolist())
-        selected_group = st.selectbox("Target Specific Group-RD (Optional):", all_groups)
+        # --- NEW: Cascading Filters for the Calling Desk ---
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
+            all_groups = ["All Groups"] + sorted(dc_consumers['Group'].dropna().unique().tolist())
+            selected_group = st.selectbox("Target Specific Group:", all_groups)
         
         if selected_group != "All Groups":
-            dc_consumers = dc_consumers[dc_consumers['Group-RD'] == selected_group]
+            dc_consumers = dc_consumers[dc_consumers['Group'] == selected_group]
+            
+        with col_f2:
+            if selected_group != "All Groups":
+                all_rds = ["All RDs"] + sorted(dc_consumers['RD'].dropna().unique().tolist())
+                selected_rd = st.selectbox("Target Specific RD:", all_rds)
+                if selected_rd != "All RDs":
+                    dc_consumers = dc_consumers[dc_consumers['RD'] == selected_rd]
+            else:
+                st.selectbox("Target Specific RD:", ["Select Group First"], disabled=True)
 
-        # 2. NEW: Remove consumers who have already been called during this session
         dc_consumers = dc_consumers[~dc_consumers['Consumer No'].isin(st.session_state['called_ivrs'])]
         
-        # 3. Sort by Arrears to get top targets
-        dc_consumers['Arrear'] = pd.to_numeric(dc_consumers['Arrear'], errors='coerce').fillna(0)
-        top_defaulters = dc_consumers.sort_values(by="Arrear", ascending=False).head(50)
-        
-        st.warning(f"🎯 Target: 50 Calls Today. Displaying Top {len(top_defaulters)} Pending Defaulters:")
-        
-        # Display the cleanly formatted data
-        st.dataframe(top_defaulters[['Consumer No', 'Consumer Name', 'Arrear', 'Mobile No', 'Group-RD']], use_container_width=True)
-        
-        target_ivrs = st.selectbox("Select Consumer IVRS to Call:", ["Select"] + top_defaulters['Consumer No'].tolist())
+        my_followups = dc_consumers[dc_consumers['Consumer No'].isin(todays_followups)]
+        if not my_followups.empty:
+            st.warning("📅 SCHEDULED FOLLOW-UPS: These consumers promised to pay by today.")
+            st.dataframe(my_followups[['Consumer No', 'Consumer Name', 'Arrear', 'Mobile No']], use_container_width=True)
+            target_ivrs = st.selectbox("Select Follow-up IVRS:", ["Select"] + my_followups['Consumer No'].tolist())
+        else:
+            dc_consumers['Arrear'] = pd.to_numeric(dc_consumers['Arrear'], errors='coerce').fillna(0)
+            top_defaulters = dc_consumers.sort_values(by="Arrear", ascending=False).head(50)
+            st.info(f"🎯 Displaying Top {len(top_defaulters)} Pending Defaulters:")
+            # --- NEW: Table displays both Group and RD columns ---
+            st.dataframe(top_defaulters[['Consumer No', 'Consumer Name', 'Arrear', 'Mobile No', 'Group', 'RD']], use_container_width=True)
+            target_ivrs = st.selectbox("Select Consumer IVRS to Call:", ["Select"] + top_defaulters['Consumer No'].tolist())
         
         if target_ivrs != "Select":
-            c_data = top_defaulters[top_defaulters['Consumer No'] == target_ivrs].iloc[0]
+            c_data = dc_consumers[dc_consumers['Consumer No'] == target_ivrs].iloc[0]
             st.markdown(f"### Consumer: {c_data['Consumer Name']} | Arrears: ₹{c_data['Arrear']}")
             mob = str(c_data['Mobile No']).split('.')[0] if pd.notna(c_data['Mobile No']) else "No Number"
             st.markdown(f"## [📞 CLICK TO CALL {mob}](tel:+91{mob})")
             
             call_status = st.selectbox("Call Status", ["Select", "Promise to Pay", "Already Paid", "Switch Off", "Wrong Number"])
-            notes = st.text_input("Additional Notes")
             
-            if call_status != "Select" and st.button("Log Call", type="primary"):
-                with st.spinner("Logging call to database..."):
-                    sheets_client = get_sheets_client()
-                    ws = sheets_client.open("Nagod_Calling_Data").sheet1
-                    ws.append_row([
-                        datetime.now().strftime("%Y-%m-%d %H:%M:%S"), st.session_state['location_code'], 
-                        st.session_state['emp_name'], target_ivrs, call_status, notes
-                    ])
-                
-                # Add to memory and refresh so it disappears!
-                st.session_state['called_ivrs'].append(target_ivrs)
-                st.success("Call logged successfully!")
-                time.sleep(1.5)
-                st.rerun()
-
-    # ---------------------------------------------------------
-    # ROUTE 3 & 4 (Unchanged)
-    # ---------------------------------------------------------
-    elif role == "3. DC Incharge (Manager)":
-        st.header(f"📊 Manager Dashboard: {active_dc_name} DC")
-        col1, col2 = st.columns(2)
-        col1.metric("Houses Visited Today", "18 / 30 Target", "-12")
-        col2.metric("Calls Made Today", "45 / 50 Target", "-5")
-
-    elif role == "4. Division Admin":
-        st.header("🏢 Division Command Center")
-        st.error("🔴 ACTION REQUIRED: Staff Failing Targets")
-        st.write("- **Jasso DC (Line Staff):** 4 visits logged today. Activity critically low.")
+            ptp_date_str = ""
+            if call_status == "Promise to Pay
