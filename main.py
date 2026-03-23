@@ -336,4 +336,4 @@ else:
             call_status = st.selectbox("Call Status", ["Select", "Promise to Pay", "Already Paid", "Switch Off", "Wrong Number"])
             
             ptp_date_str = ""
-            if call_status == "Promise to Pay
+            if call_status == "Promise to Pay"
