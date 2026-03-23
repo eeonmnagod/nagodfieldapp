@@ -17,7 +17,7 @@ DO_FILE = "DO.xlsx"
 MGR_FILE = "Mangers.xlsx"
 OFFICE_FILE = "Office_Staff.xlsx"
 SUBSTATION_FILE = "Substation_Staff.xlsx"
-FIELD_FILE = "Field_Staff.xlsx" # <-- NEW FILE ADDED HERE
+FIELD_FILE = "Field_Staff.xlsx"
 
 st.set_page_config(page_title="Nagod Command Center", page_icon="⚡", layout="wide")
 
@@ -31,7 +31,6 @@ def get_sheets_client():
 # --- 3. DATA ENGINE & HISTORY TRACKER ---
 @st.cache_data(ttl=300)
 def load_call_history():
-    """Reads the Google Sheet to track broken promises and follow-ups."""
     try:
         client = get_sheets_client()
         ws = client.open("Nagod_Calling_Data").sheet1
@@ -51,7 +50,6 @@ def load_databases():
         df_off = pd.read_excel(OFFICE_FILE, dtype=str)
         df_sub = pd.read_excel(SUBSTATION_FILE, dtype=str)
         
-        # --- NEW: Load Field Staff Data ---
         try:
             df_field = pd.read_excel(FIELD_FILE, dtype=str)
             df_field.columns = df_field.columns.str.strip()
@@ -87,9 +85,13 @@ if not df_calls.empty and not df_do.empty:
     today_str = date.today().strftime('%Y-%m-%d')
     todays_followups = ptp_history[ptp_history['FollowUpDate'] <= today_str]['IVRS'].unique().tolist()
 
+# --- DC MAPPING & DIVISION INJECTION ---
 dc_mapping = {}
 if not df_mgr.empty and 'NAME OF DC' in df_mgr.columns:
     dc_mapping = dict(zip(df_mgr['Location Code'], df_mgr['NAME OF DC']))
+
+# Force inject the Division Office into the system
+dc_mapping['1535000'] = "Division Office"
 
 def format_dc_dropdown(code):
     if code == "Select": return "Select"
@@ -124,7 +126,11 @@ if not st.session_state['logged_in']:
             st.error("❌ CRITICAL: 'Location Code' missing from DO.xlsx.")
             st.stop()
 
-        loc_codes = ["Select"] + sorted(df_do['Location Code'].dropna().unique().tolist())
+        # Build location codes list and inject 1535000 if not present
+        raw_loc_codes = df_do['Location Code'].dropna().unique().tolist()
+        if '1535000' not in raw_loc_codes:
+            raw_loc_codes.append('1535000')
+        loc_codes = ["Select"] + sorted(raw_loc_codes)
         
         # --- ROUTE 1: FIELD STAFF ---
         if role == "1. Field Staff (Line Worker)":
@@ -132,7 +138,6 @@ if not st.session_state['logged_in']:
                 st.subheader("Step 1: Activate Shift")
                 loc_code = st.selectbox("Select Your DC *", loc_codes, format_func=format_dc_dropdown)
                 
-                # --- NEW: Field Staff Dropdown ---
                 emp_name = "Select Name"
                 if loc_code != "Select":
                     if not df_field.empty and 'Location Code' in df_field.columns:
@@ -311,9 +316,20 @@ else:
     # ROUTE 2: CALLING DESK
     # ---------------------------------------------------------
     elif role == "2. Calling Desk (Substation & Office)":
-        st.header(f"📞 Calling Desk: {active_dc_name} DC")
         
-        dc_consumers = df_do[df_do['Location Code'] == st.session_state['location_code']].copy()
+        # --- NEW: Master Access Logic for Division Office (1535000) ---
+        if st.session_state['location_code'] == '1535000':
+            st.header("📞 Division HQ Calling Desk (Global Access)")
+            all_dcs = ["All DCs"] + sorted(df_do['Location Code'].dropna().unique().tolist())
+            target_dc = st.selectbox("Target Specific DC (Optional):", all_dcs, format_func=lambda x: format_dc_dropdown(x) if x != "All DCs" else "All DCs")
+            
+            if target_dc != "All DCs":
+                dc_consumers = df_do[df_do['Location Code'] == target_dc].copy()
+            else:
+                dc_consumers = df_do.copy()
+        else:
+            st.header(f"📞 Calling Desk: {active_dc_name} DC")
+            dc_consumers = df_do[df_do['Location Code'] == st.session_state['location_code']].copy()
         
         col_f1, col_f2 = st.columns(2)
         with col_f1:
