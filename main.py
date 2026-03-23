@@ -90,7 +90,6 @@ dc_mapping = {}
 if not df_mgr.empty and 'NAME OF DC' in df_mgr.columns:
     dc_mapping = dict(zip(df_mgr['Location Code'], df_mgr['NAME OF DC']))
 
-# Force inject the Division Office into the system
 dc_mapping['1535000'] = "Division Office"
 
 def format_dc_dropdown(code):
@@ -113,11 +112,13 @@ if not st.session_state['logged_in']:
     st.title("⚡ Nagod Division Command Center")
     st.markdown("### Select Your Operating Role")
     
+    # --- NEW: Added Vigilance Squad to the Main Menu ---
     role = st.radio("Login As:", [
         "1. Field Staff (Line Worker)", 
         "2. Calling Desk (Substation & Office)", 
         "3. DC Incharge (Manager)", 
-        "4. Division Admin"
+        "4. Division Admin",
+        "5. Vigilance (Theft Detection)"
     ])
     st.divider()
 
@@ -126,7 +127,6 @@ if not st.session_state['logged_in']:
             st.error("❌ CRITICAL: 'Location Code' missing from DO.xlsx.")
             st.stop()
 
-        # Build location codes list and inject 1535000 if not present
         raw_loc_codes = df_do['Location Code'].dropna().unique().tolist()
         if '1535000' not in raw_loc_codes:
             raw_loc_codes.append('1535000')
@@ -188,6 +188,43 @@ if not st.session_state['logged_in']:
                         st.rerun()
                 with col2:
                     if st.button("Cancel Shift"):
+                        st.session_state['login_step'] = 1
+                        st.rerun()
+
+        # --- NEW ROUTE 5: VIGILANCE (THEFT DETECTION) LOGIN ---
+        elif role == "5. Vigilance (Theft Detection)":
+            if st.session_state['login_step'] == 1:
+                st.subheader("Step 1: Activate Vigilance Patrol")
+                loc_code = st.selectbox("Select Operating DC *", loc_codes, format_func=format_dc_dropdown)
+                emp_name = st.text_input("Enter Officer/Squad Name *")
+                
+                if st.button("⏱️ Activate Patrol", type="primary"):
+                    if loc_code != "Select" and emp_name:
+                        st.session_state.update({'location_code': loc_code, 'emp_name': emp_name, 'login_step': 2, 'last_activity_time': datetime.now()})
+                        st.rerun()
+                    else:
+                        st.error("Please select a DC and enter your Name.")
+
+            elif st.session_state['login_step'] == 2:
+                active_dc_name = dc_mapping.get(st.session_state['location_code'], st.session_state['location_code'])
+                st.success(f"🚨 Vigilance Active: **{st.session_state['emp_name']}** | **{active_dc_name} DC**")
+                
+                loc = get_geolocation()
+                if loc and 'coords' in loc:
+                    st.session_state['lat'] = loc['coords']['latitude']
+                    st.session_state['lng'] = loc['coords']['longitude']
+                    st.success(f"📍 GPS Locked: {st.session_state['lat']:.4f}, {st.session_state['lng']:.4f}")
+                else:
+                    st.info("🛰️ Acquiring Fast GPS Lock... Please allow location permissions.")
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    # Skips the Group/RD selection, goes straight to dashboard
+                    if st.button("🚀 Enter Theft Dashboard", type="primary"):
+                        st.session_state.update({'logged_in': True, 'role': role, 'last_activity_time': datetime.now()})
+                        st.rerun()
+                with col2:
+                    if st.button("Cancel Patrol"):
                         st.session_state['login_step'] = 1
                         st.rerun()
 
@@ -313,11 +350,61 @@ else:
                 st.error("⚠️ IVRS not found in your assigned Group & RD.")
 
     # ---------------------------------------------------------
+    # ROUTE 5: VIGILANCE (THEFT DETECTION) DASHBOARD
+    # ---------------------------------------------------------
+    elif role == "5. Vigilance (Theft Detection)":
+        st.header(f"🚨 Vigilance Dashboard | {active_dc_name} DC")
+        st.warning("All theft reports require photographic evidence and immediate GPS coordinate locks.")
+        
+        lat = st.session_state.get('lat')
+        lng = st.session_state.get('lng')
+
+        st.markdown("### Log New Theft Incident")
+        theft_type = st.selectbox("Type of Theft *", ["Select", "Direct Hooking (Katiya)", "Meter Bypass", "Meter Tampering", "Unauthorized Extension"], key=f"t_type_{st.session_state.form_key}")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            is_consumer = st.radio("Is Suspect an existing consumer? *", ["Unknown", "Yes"], key=f"t_is_c_{st.session_state.form_key}")
+        with col2:
+            ivrs_no = st.text_input("Enter IVRS (If Yes)", key=f"t_ivrs_{st.session_state.form_key}") if is_consumer == "Yes" else "N/A"
+            
+        suspect_name = st.text_input("Name of Suspect / Location Details *", key=f"t_name_{st.session_state.form_key}")
+        action_taken = st.selectbox("Action Taken *", ["Select", "Cable Confiscated", "Panchnama Made", "FIR Lodged", "Pending Investigation"], key=f"t_act_{st.session_state.form_key}")
+        
+        photo = st.camera_input("Capture Evidence Photo (Required) *", key=f"t_photo_{st.session_state.form_key}")
+
+        if st.button("🚨 Submit Theft Report", type="primary"):
+            if theft_type == "Select" or action_taken == "Select" or not suspect_name or not photo:
+                st.error("⚠️ Please fill all required fields and capture the evidence photo.")
+            elif not lat:
+                st.error("⚠️ GPS Lock missing. Please refresh the page or check your permissions.")
+            else:
+                with st.spinner("Uploading evidence and logging theft..."):
+                    photo_filename = f"THEFT_{st.session_state['location_code']}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+                    payload = {"base64": base64.b64encode(photo.getvalue()).decode('utf-8'), "filename": photo_filename, "mimetype": "image/jpeg"}
+                    requests.post(GAS_URL, json=payload)
+                    
+                    sheets_client = get_sheets_client()
+                    try:
+                        ws = sheets_client.open("Nagod_Theft_Data").sheet1
+                        ws.append_row([
+                            datetime.now().strftime("%Y-%m-%d %H:%M:%S"), st.session_state['location_code'], 
+                            st.session_state['emp_name'], lat, lng, theft_type, is_consumer, ivrs_no, 
+                            suspect_name, action_taken, photo_filename
+                        ])
+                        st.session_state['last_activity_time'] = datetime.now()
+                        st.session_state.form_key += 1
+                        st.success("✅ Theft Report Logged Successfully!")
+                        time.sleep(1.5)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error saving to Google Sheets: Please ensure you created a sheet named 'Nagod_Theft_Data'. Error details: {e}")
+
+    # ---------------------------------------------------------
     # ROUTE 2: CALLING DESK
     # ---------------------------------------------------------
     elif role == "2. Calling Desk (Substation & Office)":
         
-        # --- NEW: Master Access Logic for Division Office (1535000) ---
         if st.session_state['location_code'] == '1535000':
             st.header("📞 Division HQ Calling Desk (Global Access)")
             all_dcs = ["All DCs"] + sorted(df_do['Location Code'].dropna().unique().tolist())
