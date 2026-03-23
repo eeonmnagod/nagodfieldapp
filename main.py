@@ -143,7 +143,7 @@ if not st.session_state['logged_in']:
                 else:
                     st.info("🛰️ Acquiring GPS Satellite Lock... Please allow location permissions.")
                 
-                # --- NEW: Cascading Group and RD Selection ---
+                # Cascading Group and RD Selection
                 dc_data = df_do[df_do['Location Code'] == st.session_state['location_code']]
                 
                 filtered_groups = ["Select"] + sorted(dc_data['Group'].dropna().unique().tolist())
@@ -156,13 +156,19 @@ if not st.session_state['logged_in']:
                 
                 selected_rd = st.selectbox("Select Your Assigned RD *", filtered_rds)
                 
-                if st.button("🚀 Enter Dashboard", type="primary") and selected_group != "Select" and selected_rd != "Select":
-                    st.session_state.update({
-                        'logged_in': True, 'role': role, 
-                        'group': selected_group, 'rd': selected_rd, 
-                        'last_activity_time': datetime.now()
-                    })
-                    st.rerun()
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("🚀 Enter Dashboard", type="primary") and selected_group != "Select" and selected_rd != "Select":
+                        st.session_state.update({
+                            'logged_in': True, 'role': role, 
+                            'group': selected_group, 'rd': selected_rd, 
+                            'last_activity_time': datetime.now()
+                        })
+                        st.rerun()
+                with col2:
+                    if st.button("Cancel Shift"):
+                        st.session_state['login_step'] = 1
+                        st.rerun()
 
         # --- ROUTE 2: CALLING DESK LOGIN ---
         elif role == "2. Calling Desk (Substation & Office)":
@@ -222,10 +228,9 @@ else:
         if int(idle_time_seconds / 60) >= 15:
             st.error(f"⚠️ INACTIVITY ALERT: You have been idle for {int(idle_time_seconds / 60)} minutes.")
         
-        # --- NEW: Header reflects separated Group and RD ---
         st.header(f"📍 {active_dc_name} DC | Group: {st.session_state['group']} | RD: {st.session_state['rd']}")
         
-        # --- NEW: Filter by both columns ---
+        # Filter by both columns
         my_consumers = df_do[(df_do['Group'] == st.session_state['group']) & (df_do['RD'] == st.session_state['rd'])]
         
         my_escalated = my_consumers[my_consumers['Consumer No'].isin(escalated_field_ivrs)]
@@ -294,7 +299,7 @@ else:
         
         dc_consumers = df_do[df_do['Location Code'] == st.session_state['location_code']].copy()
         
-        # --- NEW: Cascading Filters for the Calling Desk ---
+        # Cascading Filters for the Calling Desk
         col_f1, col_f2 = st.columns(2)
         with col_f1:
             all_groups = ["All Groups"] + sorted(dc_consumers['Group'].dropna().unique().tolist())
@@ -323,7 +328,8 @@ else:
             dc_consumers['Arrear'] = pd.to_numeric(dc_consumers['Arrear'], errors='coerce').fillna(0)
             top_defaulters = dc_consumers.sort_values(by="Arrear", ascending=False).head(50)
             st.info(f"🎯 Displaying Top {len(top_defaulters)} Pending Defaulters:")
-            # --- NEW: Table displays both Group and RD columns ---
+            
+            # Table displays both Group and RD columns
             st.dataframe(top_defaulters[['Consumer No', 'Consumer Name', 'Arrear', 'Mobile No', 'Group', 'RD']], use_container_width=True)
             target_ivrs = st.selectbox("Select Consumer IVRS to Call:", ["Select"] + top_defaulters['Consumer No'].tolist())
         
@@ -341,3 +347,35 @@ else:
                 ptp_date_str = ptp_date.strftime('%Y-%m-%d')
                 
             notes = st.text_input("Additional Notes")
+            
+            # The Always-Visible Submit Button
+            if st.button("💾 Log Call", type="primary"):
+                if call_status == "Select":
+                    st.error("⚠️ Please select a Call Status from the dropdown before submitting!")
+                else:
+                    with st.spinner("Logging call to database..."):
+                        sheets_client = get_sheets_client()
+                        ws = sheets_client.open("Nagod_Calling_Data").sheet1
+                        ws.append_row([
+                            datetime.now().strftime("%Y-%m-%d %H:%M:%S"), st.session_state['location_code'], 
+                            st.session_state['emp_name'], target_ivrs, call_status, notes, ptp_date_str
+                        ])
+                    
+                    st.session_state['called_ivrs'].append(target_ivrs)
+                    st.success("Call logged successfully!")
+                    time.sleep(1.5)
+                    st.rerun()
+
+    # ---------------------------------------------------------
+    # ROUTE 3 & 4 (Unchanged)
+    # ---------------------------------------------------------
+    elif role == "3. DC Incharge (Manager)":
+        st.header(f"📊 Manager Dashboard: {active_dc_name} DC")
+        col1, col2 = st.columns(2)
+        col1.metric("Houses Visited Today", "18 / 30 Target", "-12")
+        col2.metric("Calls Made Today", "45 / 50 Target", "-5")
+
+    elif role == "4. Division Admin":
+        st.header("🏢 Division Command Center")
+        st.error("🔴 ACTION REQUIRED: Staff Failing Targets")
+        st.write("- **Jasso DC (Line Staff):** 4 visits logged today. Activity critically low.")
