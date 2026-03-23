@@ -369,8 +369,8 @@ else:
             ivrs_no = st.text_input("Enter IVRS (If Yes)", key=f"t_ivrs_{st.session_state.form_key}") if is_consumer == "Yes" else "N/A"
             
         suspect_name = st.text_input("Name of Suspect,Location Details and other details *", key=f"t_name_{st.session_state.form_key}")
-        action_taken = st.selectbox("Action Taken *", ["Select", "Cable Confiscated", "Panchnama Made", "FIR Lodged", "Pending Investigation"], key=f"t_act_{st.session_state.form_key}")
-        
+        # --- NEW: JE Informed Dropdown ---
+        je_informed = st.selectbox("Has the JE been informed? *", ["Select", "Yes", "No"], key=f"t_je_{st.session_state.form_key}")
         photo = st.camera_input("Capture Evidence Photo (Required) *", key=f"t_photo_{st.session_state.form_key}")
 
         if st.button("🚨 Submit Theft Report", type="primary"):
