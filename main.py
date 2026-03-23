@@ -349,7 +349,7 @@ else:
             else:
                 st.error("⚠️ IVRS not found in your assigned Group & RD.")
 
-    # ---------------------------------------------------------
+   # ---------------------------------------------------------
     # ROUTE 5: VIGILANCE (THEFT DETECTION) DASHBOARD
     # ---------------------------------------------------------
     elif role == "5. Vigilance (Theft Detection)":
@@ -360,6 +360,7 @@ else:
         lng = st.session_state.get('lng')
 
         st.markdown("### Log New Theft Incident")
+        # Your awesome new expanded list!
         theft_type = st.selectbox("Type of Theft *", ["Select", "Direct Hooking (Katiya)","Tariff Change", "Meter Bypass","Load Enhancement", "Meter Tampering", "Premisses Change"], key=f"t_type_{st.session_state.form_key}")
         
         col1, col2 = st.columns(2)
@@ -368,14 +369,17 @@ else:
         with col2:
             ivrs_no = st.text_input("Enter IVRS (If Yes)", key=f"t_ivrs_{st.session_state.form_key}") if is_consumer == "Yes" else "N/A"
             
-        suspect_name = st.text_input("Name of Suspect,Location Details and other details *", key=f"t_name_{st.session_state.form_key}")
-        # --- NEW: JE Informed Dropdown ---
+        suspect_name = st.text_input("Name of Suspect, Location Details and other details *", key=f"t_name_{st.session_state.form_key}")
+        
+        # --- The JE Informed Dropdown ---
         je_informed = st.selectbox("Has the JE been informed? *", ["Select", "Yes", "No"], key=f"t_je_{st.session_state.form_key}")
+        
         photo = st.camera_input("Capture Evidence Photo (Required) *", key=f"t_photo_{st.session_state.form_key}")
 
         if st.button("🚨 Submit Theft Report", type="primary"):
-            if theft_type == "Select" or action_taken == "Select" or not suspect_name or not photo:
-                st.error("⚠️ Please fill all required fields and capture the evidence photo.")
+            # FIX #1: Changed action_taken to je_informed here
+            if theft_type == "Select" or je_informed == "Select" or not suspect_name or not photo:
+                st.error("⚠️ Please fill all required fields, confirm JE status, and capture the evidence photo.")
             elif not lat:
                 st.error("⚠️ GPS Lock missing. Please refresh the page or check your permissions.")
             else:
@@ -390,7 +394,8 @@ else:
                         ws.append_row([
                             datetime.now().strftime("%Y-%m-%d %H:%M:%S"), st.session_state['location_code'], 
                             st.session_state['emp_name'], lat, lng, theft_type, is_consumer, ivrs_no, 
-                            suspect_name, action_taken, photo_filename
+                            # FIX #2: Changed action_taken to je_informed here so it saves to the sheet properly
+                            suspect_name, je_informed, photo_filename
                         ])
                         st.session_state['last_activity_time'] = datetime.now()
                         st.session_state.form_key += 1
@@ -399,7 +404,6 @@ else:
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error saving to Google Sheets: Please ensure you created a sheet named 'Nagod_Theft_Data'. Error details: {e}")
-
     # ---------------------------------------------------------
     # ROUTE 2: CALLING DESK
     # ---------------------------------------------------------
