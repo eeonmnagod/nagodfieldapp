@@ -7,6 +7,14 @@ from streamlit_js_eval import get_geolocation
 import base64
 import requests
 import time
+import pytz
+from datetime import datetime, date
+
+# Add this helper to get strict Indian time:
+IST = pytz.timezone('Asia/Kolkata')
+
+# Then, anywhere in your code where you see datetime.now(), change it to:
+# datetime.now(IST)
 
 # --- 1. CONFIGURATION & SECRETS ---
 GAS_URL = "https://script.google.com/macros/s/AKfycbxrYfFv7rhhvG9RtkEGurrLUcRQAxpJkfDA0r7S32_tvHE_dcSkELzmKxQ_QDQXyfO_/exec"
