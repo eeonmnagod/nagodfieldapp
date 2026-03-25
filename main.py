@@ -327,7 +327,7 @@ else:
                 col1, col2 = st.columns(2)
                 with col1:
                     mob_correct = st.radio(f"Is Mobile ({c_mob}) correct?", ["Yes", "No - Update"], key=f"m_{st.session_state.form_key}")
-                    final_mob = st.text_input("Enter Correct Mobile", max_char=10, key=f"m_new_{st.session_state.form_key}") if mob_correct == "No - Update" else c_mob
+                    final_mob = st.text_input("Enter Correct Mobile", max_chars=10, key=f"m_new_{st.session_state.form_key}") if mob_correct == "No - Update" else c_mob
                 with col2:
                     vill_correct = st.radio(f"Is Village ({c_village}) correct?", ["Yes", "No - Update"], key=f"v_{st.session_state.form_key}")
                     final_vill = st.text_input("Enter Correct Village", key=f"v_new_{st.session_state.form_key}") if vill_correct == "No - Update" else c_village
